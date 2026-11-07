@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local runtime data (never commit these)
+config.json
+app_log.txt*
+tmdb_cache.json
+*.log
+
+# Test / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build outputs
+build/
+dist/
+*.spec
+
+# Screenshots / scratch
+ui_preview.png

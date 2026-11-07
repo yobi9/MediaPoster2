@@ -1,0 +1,4 @@
+# Runtime dependencies — tested with Python 3.10+ (including 3.14)
+PyQt6>=6.7,<7
+Pillow>=10.4
+requests>=2.32

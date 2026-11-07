@@ -1,0 +1,196 @@
+"""Configuration, storage locations and persistence.
+
+The GUI and the CLI share the same :class:`AppConfig` object which is stored as
+JSON next to the log file (``%LOCALAPPDATA%/MediaArtAutoSync`` on Windows).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+from dataclasses import asdict, dataclass, fields
+from pathlib import Path
+from typing import Any, get_type_hints
+
+APP_NAME = "MediaArt Auto-Sync"
+APP_SLUG = "MediaArtAutoSync"
+VERSION = "1.0.0"
+
+SUPPORTED_LANGUAGES: tuple[tuple[str, str], ...] = (
+    ("ar", "العربية"),
+    ("en", "English"),
+    ("fr", "Français"),
+    ("de", "Deutsch"),
+    ("es", "Español"),
+    ("tr", "Türkçe"),
+    ("ja", "日本語"),
+    ("ko", "한국어"),
+)
+
+MEDIA_FILTERS: tuple[tuple[str, str], ...] = (
+    ("all", "الكل (أفلام + مسلسلات)"),
+    ("movies", "أفلام فقط"),
+    ("series", "مسلسلات فقط"),
+)
+
+
+def get_data_dir() -> Path:
+    """Return a writable per-user folder for config, cache and logs."""
+    override = os.environ.get("MEDIAART_DATA_DIR", "").strip()
+    if override:
+        path = Path(override).expanduser()
+    elif os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        path = Path(base) / APP_SLUG
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+        path = Path(base) / APP_SLUG
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+DATA_DIR = get_data_dir()
+CONFIG_PATH = DATA_DIR / "config.json"
+LOG_PATH = DATA_DIR / "app_log.txt"
+CACHE_PATH = DATA_DIR / "tmdb_cache.json"
+
+DEFAULT_POSTER_NAME = "poster.jpg"
+DEFAULT_BACKDROP_NAME = "fanart.jpg"
+ALTERNATE_BACKDROP_NAME = "background.jpg"
+FOLDER_THUMB_NAME = "folder.jpg"
+
+
+@dataclass(slots=True)
+class AppConfig:
+    """Everything the user can tweak. Unknown JSON keys are ignored."""
+
+    tmdb_api_key: str = ""
+    library_path: str = ""
+    language: str = "ar"
+
+    jpeg_quality: int = 95
+    overwrite_images: bool = False
+    create_background_copy: bool = True
+    create_folder_thumbnail: bool = False
+
+    convert_existing_webp: bool = True
+    convert_nested_webp: bool = False
+    prefer_localized_artwork: bool = True
+
+    dry_run: bool = False
+    convert_only: bool = False
+    media_filter: str = "all"  # all | movies | series
+
+    request_timeout: int = 20
+    min_request_interval: float = 0.35
+    max_retries: int = 3
+    use_cache: bool = True
+    cache_ttl_days: int = 30
+
+    def __post_init__(self) -> None:
+        self.tmdb_api_key = (self.tmdb_api_key or "").strip()
+        self.library_path = (self.library_path or "").strip()
+        self.language = (self.language or "ar").strip() or "ar"
+        self.jpeg_quality = _clamp_int(self.jpeg_quality, 60, 100, 95)
+        self.request_timeout = _clamp_int(self.request_timeout, 5, 120, 20)
+        self.max_retries = _clamp_int(self.max_retries, 1, 10, 3)
+        self.cache_ttl_days = _clamp_int(self.cache_ttl_days, 1, 3650, 30)
+        try:
+            self.min_request_interval = min(5.0, max(0.0, float(self.min_request_interval)))
+        except (TypeError, ValueError):
+            self.min_request_interval = 0.35
+        if self.media_filter not in {"all", "movies", "series"}:
+            self.media_filter = "all"
+
+    # ------------------------------------------------------------------
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AppConfig":
+        hints = get_type_hints(cls)
+        known = {f.name: hints.get(f.name, str) for f in fields(cls)}
+        cleaned: dict[str, Any] = {}
+        for key, value in (data or {}).items():
+            if key not in known:
+                continue
+            expected = known[key]
+            try:
+                if expected is bool:
+                    cleaned[key] = _as_bool(value)
+                elif expected is int:
+                    cleaned[key] = int(value)
+                elif expected is float:
+                    cleaned[key] = float(value)
+                else:
+                    cleaned[key] = str(value)
+            except (TypeError, ValueError):
+                continue
+        return cls(**cleaned)
+
+    def save(self, path: Path | None = None) -> None:
+        save_config(self, path or CONFIG_PATH)
+
+
+def _clamp_int(value: Any, low: int, high: int, default: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, number))
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "نعم"}
+
+
+def load_config(path: Path | None = None) -> AppConfig:
+    target = path or CONFIG_PATH
+    try:
+        raw = target.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return AppConfig.from_dict(data)
+    except FileNotFoundError:
+        pass
+    except (OSError, json.JSONDecodeError):
+        # A broken config must never prevent the app from starting.
+        pass
+    return AppConfig()
+
+
+def save_config(config: AppConfig, path: Path | None = None) -> None:
+    target = path or CONFIG_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(config.to_dict(), ensure_ascii=False, indent=2)
+    fd, tmp_name = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=str(target.parent))
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def resolve_token(config: AppConfig) -> str:
+    """Token resolution order: explicit config, then environment variables."""
+    for env_name in ("TMDB_API_KEY", "TMDB_READ_ACCESS_TOKEN", "TMDB_TOKEN"):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            return value
+    return (config.tmdb_api_key or "").strip()
+
+
+def env_token_present() -> bool:
+    return any(
+        os.environ.get(name, "").strip()
+        for name in ("TMDB_API_KEY", "TMDB_READ_ACCESS_TOKEN", "TMDB_TOKEN")
+    )
