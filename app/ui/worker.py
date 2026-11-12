@@ -8,7 +8,7 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from ..config import AppConfig
-from ..logging_setup import get_logger
+from ..logging_setup import RedactionFilter, get_logger
 from ..models import RunSummary
 from ..services.images import ImageService
 from ..services.processor import Processor
@@ -23,11 +23,17 @@ class LogEmitter(QObject):
 
 
 class QtLogHandler(logging.Handler):
-    """Forward ``mediaart`` log records to the GUI console (thread-safe)."""
+    """Forward ``mediaart`` log records to the GUI console (thread-safe).
 
-    def __init__(self) -> None:
-        super().__init__()
+    The console shows user-facing records only (INFO and above); the verbose
+    DEBUG stream stays in the rotating log file. Secrets are redacted with
+    the very same filter used by the file and console handlers.
+    """
+
+    def __init__(self, level: int = logging.INFO) -> None:
+        super().__init__(level)
         self.emitter = LogEmitter()
+        self.addFilter(RedactionFilter())
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
