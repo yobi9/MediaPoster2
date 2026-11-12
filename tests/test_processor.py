@@ -117,6 +117,27 @@ def test_existing_images_are_skipped_without_api_call(tmp_path: Path) -> None:
     processor.close()
 
 
+def test_existing_background_is_kept_when_fanart_is_downloaded(
+    tmp_path: Path, image_server: str
+) -> None:
+    """T4_safety: background.jpg القائمة لا تُحذف ولا تُستبدل عند تنزيل fanart.
+
+    حالة واقعية: المستخدم لديه background.jpg بدقة منخفضة من تشغيل سابق،
+    والآن يُنزَّل fanart.jpg جديد بدقة أعلى — يجب ألا تُلمس النسخة القديمة.
+    """
+    item = make_item(tmp_path)
+    (item.path / "background.jpg").write_bytes(b"OLD_BG")
+    client = FakeClient(make_match(image_server))
+    processor = Processor(AppConfig(), client=client, images=ImageService())
+
+    result = processor.process_item(item)
+
+    assert result.backdrop_saved
+    assert (item.path / "fanart.jpg").is_file()
+    assert (item.path / "background.jpg").read_bytes() == b"OLD_BG"
+    processor.close()
+
+
 def test_not_found(tmp_path: Path) -> None:
     item = make_item(tmp_path)
     config = AppConfig()
