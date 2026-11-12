@@ -48,6 +48,44 @@ def image_server(tmp_path: Path):
         thread.join(timeout=5)
 
 
+@pytest.fixture()
+def counting_server():
+    """خادم صور يعدّ الطلبات لكل نوع (poster / backdrop)."""
+    buffer = io.BytesIO()
+    Image.new("RGB", (120, 180), (30, 60, 90)).save(buffer, format="JPEG")
+    jpeg = buffer.getvalue()
+    counts = {"poster": 0, "backdrop": 0}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            if self.path == "/poster.jpg":
+                counts["poster"] += 1
+            elif self.path == "/backdrop.jpg":
+                counts["backdrop"] += 1
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(jpeg)))
+            self.end_headers()
+            self.wfile.write(jpeg)
+
+        def log_message(self, *args):  # silence
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", counts
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 class FakeClient:
     def __init__(self, match: TMDBMatch | None) -> None:
         self.match = match
@@ -89,7 +127,7 @@ def make_webp(path: Path, size: tuple[int, int] = (40, 60)) -> Path:
 def test_process_downloads_poster_and_both_backdrops(tmp_path: Path, image_server: str) -> None:
     item = make_item(tmp_path)
     client = FakeClient(make_match(image_server))
-    config = AppConfig(jpeg_quality=95, create_background_copy=True)
+    config = AppConfig(jpeg_quality=95, download_fanart=True, download_background=True)
     processor = Processor(config, client=client, images=ImageService(quality=95))
 
     result = processor.process_item(item)
@@ -129,7 +167,7 @@ def test_existing_background_is_kept_when_fanart_is_downloaded(
     item = make_item(tmp_path)
     (item.path / "background.jpg").write_bytes(b"OLD_BG")
     client = FakeClient(make_match(image_server))
-    processor = Processor(AppConfig(), client=client, images=ImageService())
+    processor = Processor(AppConfig(download_fanart=True), client=client, images=ImageService())
 
     result = processor.process_item(item)
 
@@ -157,7 +195,7 @@ def test_background_only_does_not_replace_standard_fanart(
     item = make_item(tmp_path)
     Image.new("RGB", (10, 10), (0, 0, 255)).save(item.path / "background.jpg", format="JPEG")
     client = FakeClient(make_match(image_server))
-    processor = Processor(AppConfig(), client=client, images=ImageService())
+    processor = Processor(AppConfig(download_fanart=True), client=client, images=ImageService())
 
     result = processor.process_item(item)
 
@@ -180,7 +218,7 @@ def test_existing_fanart_is_not_downloaded_again(
     Image.new("RGB", (10, 10), (0, 0, 255)).save(item.path / "fanart.jpg", format="JPEG")
     before = (item.path / "fanart.jpg").read_bytes()
     client = FakeClient(make_match(image_server))
-    processor = Processor(AppConfig(), client=client, images=ImageService())
+    processor = Processor(AppConfig(download_fanart=True), client=client, images=ImageService())
 
     result = processor.process_item(item)
 
@@ -201,7 +239,11 @@ def test_existing_fanart_and_background_skip_download(
     fanart_before = (item.path / "fanart.jpg").read_bytes()
     background_before = (item.path / "background.jpg").read_bytes()
     client = FakeClient(make_match(image_server))
-    processor = Processor(AppConfig(), client=client, images=ImageService())
+    processor = Processor(
+        AppConfig(download_fanart=True, download_background=True),
+        client=client,
+        images=ImageService(),
+    )
 
     result = processor.process_item(item)
 
@@ -345,7 +387,7 @@ def test_partial_when_poster_fails(tmp_path: Path, image_server: str) -> None:
     match = make_match(image_server)
     match.poster_path = f"{image_server}/missing.jpg"
     processor = Processor(
-        AppConfig(),
+        AppConfig(download_fanart=True),
         client=FakeClient(match),
         images=ImageService(quality=95),
     )
@@ -433,7 +475,9 @@ def test_output_root_mirrors_library_relative_path(
     """B2-1: الصور تُكتب في output_root/<المسار النسبي>، والمصدر يبقى سليماً."""
     item = make_item(tmp_path)
     output = tmp_path / "out"
-    config = _output_config(tmp_path, output, create_background_copy=True)
+    config = _output_config(
+        tmp_path, output, download_fanart=True, download_background=True
+    )
     processor = Processor(
         config, client=FakeClient(make_match(image_server)), images=ImageService(quality=95)
     )
@@ -540,7 +584,7 @@ def test_output_root_writes_manifest_structure(
     item = make_item(tmp_path)
     output = tmp_path / "out"
     processor = Processor(
-        _output_config(tmp_path, output),
+        _output_config(tmp_path, output, download_fanart=True),
         client=FakeClient(make_match(image_server)),
         images=ImageService(quality=95),
     )
@@ -593,6 +637,158 @@ def test_output_root_equal_to_library_is_ignored(
     assert result.status is Status.OK
     assert (item.path / "poster.jpg").is_file()
     assert list(tmp_path.glob("**/.mediaart_manifest.json")) == []
+
+
+# ----------------------------------------------------------------------
+# أنواع الصور المستقلة (A-types)
+# ----------------------------------------------------------------------
+#: (poster, fanart, background) ⇒ (الملفات المتوقعة، طلبات poster، طلبات backdrop)
+_IMAGE_CASES = [
+    (False, False, False, set(), 0, 0),
+    (False, False, True, {"background.jpg"}, 0, 1),
+    (False, True, False, {"fanart.jpg"}, 0, 1),
+    (False, True, True, {"fanart.jpg", "background.jpg"}, 0, 1),
+    (True, False, False, {"poster.jpg"}, 1, 0),
+    (True, False, True, {"poster.jpg", "background.jpg"}, 1, 1),
+    (True, True, False, {"poster.jpg", "fanart.jpg"}, 1, 1),
+    (True, True, True, {"poster.jpg", "fanart.jpg", "background.jpg"}, 1, 1),
+]
+
+
+@pytest.mark.parametrize(
+    "poster,fanart,background,present,poster_requests,backdrop_requests",
+    _IMAGE_CASES,
+)
+def test_image_types_are_independent(
+    tmp_path: Path,
+    counting_server,
+    poster: bool,
+    fanart: bool,
+    background: bool,
+    present: set[str],
+    poster_requests: int,
+    backdrop_requests: int,
+) -> None:
+    """C000–C111: كل نوع يُنزَّل ويُكتب بذاته، والخلفية بطلب واحد فقط."""
+    base, counts = counting_server
+    item = make_item(tmp_path)
+    config = AppConfig(
+        download_poster=poster,
+        download_fanart=fanart,
+        download_background=background,
+        jpeg_quality=95,
+    )
+    processor = Processor(
+        config, client=FakeClient(make_match(base)), images=ImageService(quality=95)
+    )
+
+    result = processor.process_item(item)
+    processor.close()
+
+    found = {
+        name
+        for name in ("poster.jpg", "fanart.jpg", "background.jpg")
+        if (item.path / name).is_file()
+    }
+    assert found == present
+    assert counts == {"poster": poster_requests, "backdrop": backdrop_requests}
+    expected = Status.SKIPPED if not present else Status.OK
+    assert result.status is expected
+
+
+def test_existing_poster_is_not_downloaded_again(
+    tmp_path: Path, counting_server
+) -> None:
+    """X1: poster.jpg موجود مسبقاً ⇒ لا طلب ملصق إطلاقاً."""
+    base, counts = counting_server
+    item = make_item(tmp_path)
+    Image.new("RGB", (10, 10)).save(item.path / "poster.jpg", format="JPEG")
+    processor = Processor(
+        AppConfig(download_poster=True),
+        client=FakeClient(make_match(base)),
+        images=ImageService(),
+    )
+
+    result = processor.process_item(item)
+    processor.close()
+
+    assert result.status is Status.SKIPPED
+    assert counts == {"poster": 0, "backdrop": 0}
+
+
+def test_missing_background_is_downloaded_not_copied(
+    tmp_path: Path, counting_server
+) -> None:
+    """X2: fanart موجود + background مطلوب ⇒ تنزيل جديد لا نسخ من fanart."""
+    base, counts = counting_server
+    item = make_item(tmp_path)
+    Image.new("RGB", (10, 10), (0, 0, 255)).save(
+        item.path / "fanart.jpg", format="JPEG"
+    )
+    fanart_before = (item.path / "fanart.jpg").read_bytes()
+    processor = Processor(
+        AppConfig(download_poster=False, download_fanart=False, download_background=True),
+        client=FakeClient(make_match(base)),
+        images=ImageService(quality=95),
+    )
+
+    processor.process_item(item)
+    processor.close()
+
+    with Image.open(item.path / "background.jpg") as downloaded:
+        assert downloaded.size == (120, 180)
+    assert (item.path / "fanart.jpg").read_bytes() == fanart_before
+    assert counts["backdrop"] == 1
+
+
+def test_disabling_a_type_keeps_the_existing_file(
+    tmp_path: Path, counting_server
+) -> None:
+    """X3: إطفاء fanart بعد إنشائه ⇒ الملف يبقى ولا يُحذف."""
+    base, counts = counting_server
+    item = make_item(tmp_path)
+    first = Processor(
+        AppConfig(download_poster=False, download_fanart=True),
+        client=FakeClient(make_match(base)),
+        images=ImageService(),
+    )
+    first.process_item(item)
+    first.close()
+    before = (item.path / "fanart.jpg").read_bytes()
+
+    second = Processor(
+        AppConfig(download_poster=False, download_fanart=False),
+        client=FakeClient(make_match(base)),
+        images=ImageService(),
+    )
+    result = second.process_item(item)
+    second.close()
+
+    assert result.status is Status.SKIPPED
+    assert (item.path / "fanart.jpg").read_bytes() == before
+    assert counts["backdrop"] == 1
+
+
+def test_missing_backdrop_is_skipped_not_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """X4: فيلم قديم بلا خلفية ⇒ تحذير + SKIPPED (لا ERROR)."""
+    item = make_item(tmp_path)
+    match = make_match("http://127.0.0.1:1")
+    match.backdrop_path = None
+    processor = Processor(
+        AppConfig(download_poster=False, download_fanart=True),
+        client=FakeClient(match),
+        images=ImageService(),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="mediaart.processor"):
+        result = processor.process_item(item)
+    processor.close()
+
+    assert result.status is Status.SKIPPED
+    assert "لا يوجد رابط خلفية" in result.message
+    assert "لا يوجد رابط خلفية" in caplog.text
 
 
 # ----------------------------------------------------------------------

@@ -43,6 +43,16 @@ class Processor:
         # one ERROR per item at `target.mkdir()`.
         if (config.output_root or "").strip():
             ensure_output_root(config.output_root)
+        # ``--images ""`` and the GUI checkboxes change the flags *after*
+        # AppConfig.__post_init__, so warn once per run here as well.
+        if not (
+            config.download_poster
+            or config.download_fanart
+            or config.download_background
+        ):
+            logger.warning(
+                "تحذير: كل أنواع الصور معطّلة — لن يُنزَّل أي ملف صورة."
+            )
         self.config = config
         self.client = client
         self.images = images or ImageService(
@@ -364,28 +374,53 @@ class Processor:
         if cfg.convert_only:
             return self._conversion_only_result(item, conversion)
 
-        poster_names = [DEFAULT_POSTER_NAME]
-        backdrop_names = [DEFAULT_BACKDROP_NAME]
-        if cfg.create_background_copy:
-            backdrop_names.append(ALTERNATE_BACKDROP_NAME)
-
-        if not cfg.dry_run:
-            self._mirror_backdrops(target, backdrop_names)
+        want_poster = bool(cfg.download_poster)
+        want_fanart = bool(cfg.download_fanart)
+        want_background = bool(cfg.download_background)
+        want_backdrop = want_fanart or want_background
 
         poster_path = target / DEFAULT_POSTER_NAME
-        has_poster = _is_non_empty_file(poster_path)
-        # The standard backdrop is fanart.jpg only. background.jpg is an extra
-        # copy written *after* fanart, so it must never stand in for it.
-        has_backdrop = _is_non_empty_file(target / DEFAULT_BACKDROP_NAME)
-        need_poster = cfg.overwrite_images or not has_poster
-        need_backdrop = cfg.overwrite_images or not has_backdrop
+        fanart_path = target / DEFAULT_BACKDROP_NAME
+        background_path = target / ALTERNATE_BACKDROP_NAME
 
-        if self.output_root is not None and (has_poster or has_backdrop):
-            self._warn_untracked_files(folder, target, has_poster, has_backdrop)
+        has_poster = _is_non_empty_file(poster_path)
+        has_fanart = _is_non_empty_file(fanart_path)
+        has_background = _is_non_empty_file(background_path)
+
+        # كل نوع يُفحص مستقلاً: وجود poster.jpg لا يعني تخطّي fanart.jpg.
+        need_poster = want_poster and (cfg.overwrite_images or not has_poster)
+        need_fanart = want_fanart and (cfg.overwrite_images or not has_fanart)
+        need_background = want_background and (
+            cfg.overwrite_images or not has_background
+        )
+        need_backdrop = need_fanart or need_background
+
+        if self.output_root is not None and (
+            has_poster or has_fanart or has_background
+        ):
+            self._warn_untracked_files(folder, target, has_poster, has_fanart)
+
+        if not want_poster and not want_backdrop:
+            message = "كل أنواع الصور معطّلة — لم يُنزَّل أي ملف."
+            if cfg.dry_run:
+                if conversion.would_convert:
+                    message = (
+                        f"[معاينة] سيتم تحويل {conversion.would_convert} ملف WebP إلى JPG. "
+                        f"{message}"
+                    )
+            elif conversion.converted:
+                message = f"تم تحويل {conversion.converted} ملف WebP. {message}"
+            return ItemResult(
+                item=item,
+                status=Status.SKIPPED,
+                message=message,
+                webp_converted=conversion.converted,
+                webp_would_convert=conversion.would_convert,
+            )
 
         if not need_poster and not need_backdrop:
             self._ensure_folder_thumbnail(target)
-            message = "الصور القياسية موجودة مسبقاً."
+            message = "الصور المطلوبة موجودة مسبقاً."
             if cfg.dry_run:
                 if conversion.would_convert:
                     message = (
@@ -415,11 +450,23 @@ class Processor:
                 webp_would_convert=conversion.would_convert,
             )
 
-        if not match.poster_path and not match.backdrop_path:
+        # لا شيء من الأنواع المطلوبة متوفر في TMDB: هذا SKIPPED لا ERROR
+        # (حالة شائعة: فيلم قديم بلا خلفية).
+        if not (
+            (need_poster and match.poster_path)
+            or (need_backdrop and match.backdrop_path)
+        ):
+            missing: list[str] = []
+            if need_poster and not match.poster_path:
+                missing.append("لا يوجد رابط ملصق في TMDB")
+            if need_backdrop and not match.backdrop_path:
+                missing.append("لا يوجد رابط خلفية في TMDB")
+            message = f"'{match.title}' — " + "؛ ".join(missing)
+            logger.warning("%s: %s", item.title, message)
             return ItemResult(
                 item=item,
-                status=Status.NOT_FOUND,
-                message=f"تم العثور على '{match.title}' لكن بدون ملصق أو خلفية.",
+                status=Status.SKIPPED,
+                message=message,
                 matched_title=match.title,
                 webp_converted=conversion.converted,
                 webp_would_convert=conversion.would_convert,
@@ -429,8 +476,10 @@ class Processor:
             plans = []
             if need_poster and match.poster_path:
                 plans.append("الملصق")
-            if need_backdrop and match.backdrop_path:
-                plans.append("الخلفية")
+            if need_fanart and match.backdrop_path:
+                plans.append("fanart.jpg")
+            if need_background and match.backdrop_path:
+                plans.append("background.jpg")
             detail = " و".join(plans) if plans else "لا توجد صور ناقصة"
             message = (
                 f"[معاينة] تطابق: {match.title} ({match.year or '؟'}) "
@@ -451,68 +500,96 @@ class Processor:
             )
 
         errors: list[str] = []
+        warnings_list: list[str] = []
         poster_saved = False
+        fanart_saved = False
+        background_saved = False
         backdrop_saved = False
 
-        if need_poster and match.poster_path:
-            try:
-                written = self.images.save_image(
-                    _require_url(match.poster_path),
-                    target,
-                    poster_names,
-                    overwrite=cfg.overwrite_images,
-                )
-                poster_saved = bool(written)
-                if not written and not has_poster:
-                    errors.append("تعذر حفظ الملصق")
-            except ImageError as exc:
-                errors.append(f"الملصق: {exc}")
-                logger.error("%s: فشل تنزيل الملصق — %s", item.title, exc)
-        elif need_poster:
-            errors.append("لا يوجد رابط ملصق في TMDB")
+        if need_poster:
+            if match.poster_path:
+                try:
+                    written = self.images.save_image(
+                        _require_url(match.poster_path),
+                        target,
+                        [DEFAULT_POSTER_NAME],
+                        overwrite=cfg.overwrite_images,
+                    )
+                    poster_saved = bool(written)
+                    if not written and not has_poster:
+                        errors.append("تعذر حفظ الملصق")
+                except ImageError as exc:
+                    errors.append(f"الملصق: {exc}")
+                    logger.error("%s: فشل تنزيل الملصق — %s", item.title, exc)
+            else:
+                warnings_list.append("لا يوجد رابط ملصق في TMDB")
+                logger.warning("%s: لا يوجد رابط ملصق في TMDB.", item.title)
 
-        if need_backdrop and match.backdrop_path:
-            try:
-                written = self.images.save_image(
-                    _require_url(match.backdrop_path),
-                    target,
-                    backdrop_names,
-                    overwrite=cfg.overwrite_images,
-                )
-                backdrop_saved = bool(written)
-                if not written and not has_backdrop:
-                    errors.append("تعذر حفظ الخلفية")
-            except ImageError as exc:
-                errors.append(f"الخلفية: {exc}")
-                logger.error("%s: فشل تنزيل الخلفية — %s", item.title, exc)
-        elif need_backdrop:
-            errors.append("لا يوجد رابط خلفية في TMDB")
+        if need_backdrop:
+            if match.backdrop_path:
+                # طلب واحد فقط: يُنزَّل إلى أول اسم مطلوب ثم يُنسخ من نفس
+                # البيانات للأسماء الأخرى (لا قراءة من fanart.jpg ولا طلب ثانٍ).
+                names: list[str] = []
+                if need_fanart:
+                    names.append(DEFAULT_BACKDROP_NAME)
+                if need_background:
+                    names.append(ALTERNATE_BACKDROP_NAME)
+                try:
+                    written = self.images.save_image(
+                        _require_url(match.backdrop_path),
+                        target,
+                        names,
+                        overwrite=cfg.overwrite_images,
+                    )
+                    backdrop_saved = bool(written)
+                    fanart_saved = need_fanart and _is_non_empty_file(fanart_path)
+                    background_saved = need_background and _is_non_empty_file(
+                        background_path
+                    )
+                    if not written and not (fanart_saved or background_saved):
+                        errors.append("تعذر حفظ الخلفية")
+                except ImageError as exc:
+                    errors.append(f"الخلفية: {exc}")
+                    logger.error("%s: فشل تنزيل الخلفية — %s", item.title, exc)
+            else:
+                warnings_list.append("لا يوجد رابط خلفية في TMDB")
+                logger.warning("%s: لا يوجد رابط خلفية في TMDB.", item.title)
 
         self._ensure_folder_thumbnail(target)
 
         final_poster = _is_non_empty_file(poster_path)
-        final_backdrop = _is_non_empty_file(target / DEFAULT_BACKDROP_NAME)
-        required_ok = (not need_poster or final_poster) and (not need_backdrop or final_backdrop)
+        final_fanart = _is_non_empty_file(fanart_path)
+        final_background = _is_non_empty_file(background_path)
+
+        required_ok = True
+        if need_poster and match.poster_path:
+            required_ok = required_ok and final_poster
+        if need_fanart and match.backdrop_path:
+            required_ok = required_ok and final_fanart
+        if need_background and match.backdrop_path:
+            required_ok = required_ok and final_background
 
         if required_ok:
-            status = Status.PARTIAL if errors else Status.OK
-        elif final_poster or final_backdrop:
+            status = Status.PARTIAL if (errors or warnings_list) else Status.OK
+        elif final_poster or final_fanart or final_background:
             status = Status.PARTIAL
         else:
             status = Status.ERROR
 
-        saved_labels = []
+        saved_labels: list[str] = []
         if poster_saved:
             saved_labels.append("الملصق")
-        if backdrop_saved:
-            saved_labels.append("الخلفية")
+        if fanart_saved:
+            saved_labels.append("fanart.jpg")
+        if background_saved:
+            saved_labels.append("background.jpg")
         message = (
             "تم تنزيل " + " و".join(saved_labels)
             if saved_labels
             else "لم يتم حفظ صور جديدة"
         )
-        if errors:
-            message += " — " + "؛ ".join(errors)
+        if errors or warnings_list:
+            message += " — " + "؛ ".join(errors + warnings_list)
         if conversion.converted:
             message = f"تحويل WebP: {conversion.converted}. " + message
 
@@ -563,23 +640,6 @@ class Processor:
             webp_would_convert=conversion.would_convert,
             dry_run=dry_run,
         )
-
-    def _mirror_backdrops(self, folder: Path, names: list[str]) -> None:
-        # The source is the standard fanart.jpg only. Mirroring the other
-        # way round (background.jpg -> fanart.jpg) would fake the standard
-        # file and prevent the real download.
-        primary = folder / DEFAULT_BACKDROP_NAME
-        if not _is_non_empty_file(primary):
-            return
-        for name in names:
-            target = folder / name
-            if target == primary:
-                continue
-            try:
-                if copy_image(primary, target, overwrite=False):
-                    logger.debug("تم إنشاء نسخة خلفية إضافية: %s", target.name)
-            except ImageError as exc:
-                logger.warning("تعذر نسخ %s إلى %s: %s", primary.name, target.name, exc)
 
     def _ensure_folder_thumbnail(self, folder: Path) -> None:
         if not self.config.create_folder_thumbnail:
