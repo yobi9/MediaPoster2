@@ -464,15 +464,15 @@ raw
    > «المشاركة قراءة فقط» (انظر 11.3).
 1. **تحويل WebP** حسب الإعدادات (متكرر للمسلسلات فقط عند التفعيل).
 2. إن كان `convert_only` → `_conversion_only_result` وانتهى.
-3. تحديد الأسماء: `poster.jpg`، `fanart.jpg`، و`background.jpg` إن مُفعّل.
-4. **نسخ الخلفية** الموجودة إلى الاسم البديل قبل أي شبكة (إن أمكن).
-5. فحص وجود الصور الفعلية (ملف موجود وحجمه > 0).
-6. إن لم تكن هناك حاجة لصور → `SKIPPED` (مع ذكر التحويلات إن حدثت).
+3. تحديد الأنواع: `want_poster`/`want_fanart`/`want_background` من `download_*`، ثم `need_*` لكل نوع على حدة.
+4. فحص وجود كل نوع فعلياً (ملف موجود وحجمه > 0)؛ وجود `poster.jpg` لا يُسقط `fanart.jpg`.
+5. إن كانت الأنواع الثلاثة معطّلة → `SKIPPED` بلا شبكة.
+6. إن لم يبقَ أي نوع ناقص → `SKIPPED` (مع ذكر التحويلات إن حدثت).
 7. إن لم يكن هناك `client` → `MediaArtError`.
 8. `find_match` → إن لم يوجد → `NOT_FOUND`.
-9. إن لم يوجد أي رابط صورة → `NOT_FOUND` مع عنوان المطابقة.
+9. إن لم يوجد رابط لأي نوع مطلوب → `SKIPPED` مع تحذير (لا `ERROR`).
 10. `dry_run` → `PREVIEW` (معاينة) مع خطة التنزيل، دون كتابة.
-11. تنزيل الملصق والخلفية كلٌّ على حدة، وجمع الأخطاء.
+11. تنزيل الملصق والخلفية: طلب واحد للخلفية ثم نسخ من نفس البيانات للأسماء المطلوبة.
 12. إنشاء `folder.jpg` إن مُفعّل.
 13. الحالة النهائية وفق الجدول أدناه.
 
@@ -482,12 +482,13 @@ raw
 |---|---|
 | مجلد الهدف غير قابل للكتابة | `ERROR` (مع `target_writable=False`) |
 | كل الصور المطلوبة موجودة بعد العملية، ولا أخطاء | `OK` |
-| كل المطلوب موجود لكن حدث خطأ جزئي (مثلاً فشل نسخة إضافية) | `PARTIAL` |
+| كل المطلوب موجود لكن نوع مطلوب بلا رابط في TMDB | `PARTIAL` |
 | تعذّر بعض المطلوب لكن توفّرت صورة واحدة على الأقل | `PARTIAL` |
-| لا صورة مطلوبة توفّرت | `ERROR` |
-| الصور القياسية موجودة مسبقاً | `SKIPPED` |
+| لا صورة مطلوبة توفّرت (فشل كل التنزيلات) | `ERROR` |
+| كل الأنواع معطّلة (`download_*` = false) | `SKIPPED` |
+| الصور المطلوبة موجودة مسبقاً | `SKIPPED` |
 | وضع المعاينة (`dry_run`) | `PREVIEW` (معاينة) — لا تنفيذ ولا كتابة |
-| لا مطابقة/لا روابط | `NOT_FOUND` |
+| لا مطابقة في TMDB | `NOT_FOUND` |
 | إلغاء المستخدم | `CANCELLED` |
 
 `ItemResult` يحمل: `status`, `message`, `matched_title`, `poster_saved`, `backdrop_saved`,
@@ -562,6 +563,19 @@ raw
   `ConversionResult.cancelled`. الـCLI يحوّل SIGINT إلى `Event` (رمز 130)،
   والواجهة تمرّر `QThread.requestInterruption` عبر `RunWorker._should_cancel`.
 
+### 11.6 أنواع الصور المستقلة (A-types)
+
+- ثلاثة مفاتيح: `download_poster` (افتراضي `True`)، `download_fanart` و`download_background`
+  (افتراضيًا `False`). `--images` في CLI يتجاوزها.
+- `want_*` تُشتق من المفاتيح، و`need_*` تُفحص **لكل نوع** على حدة: وجود `poster.jpg`
+  لا يعني تخطّي `fanart.jpg`، وإعادة التشغيل بإعدادات مختلفة تُكمل الناقص فقط.
+- الخلفية تُنزَّل طلباً واحداً إلى أول اسم مطلوب ثم تُنسخ من **نفس البيانات** للأسماء
+  الأخرى (`ImageService.save_image`). إذا احتيج `background.jpg` وحده يُنزَّل من الشبكة
+  بدل النسخ من `fanart.jpg`.
+- لا حذف أبداً عند تعطيل نوع: الملفات القديمة تبقى (آمن للترحيل).
+- غياب رابط في TMDB ⇒ تحذير + `SKIPPED`/`PARTIAL`، لا `ERROR`.
+- `_mirror_backdrops` حُذفت؛ لا مسار يخلق `background.jpg` قبل معرفة الطلب.
+
 ## 12. الواجهة الرسومية — `ui/`
 
 ### 12.1 البنية
@@ -627,7 +641,9 @@ raw
 | `backdrop_size` | str | `"w780"` | `w300,w780,w1280,original` | دقة الخلفية المطلوبة |
 | `jpeg_quality` | int | `95` | 60..100 | جودة إعادة الترميز |
 | `overwrite_images` | bool | `False` | — | استبدال الصور وحذف WebP رغم وجود JPG |
-| `create_background_copy` | bool | `True` | — | نسخة `background.jpg` |
+| `download_poster` | bool | `True` | — | تنزيل `poster.jpg` |
+| `download_fanart` | bool | `False` | — | تنزيل `fanart.jpg` |
+| `download_background` | bool | `False` | — | تنزيل `background.jpg` من بيانات الخلفية |
 | `create_folder_thumbnail` | bool | `False` | — | نسخة `folder.jpg` (من config/CLI فقط) |
 | `convert_existing_webp` | bool | `True` | — | تحويل WebP داخل مجلد العمل |
 | `convert_nested_webp` | bool | `False` | — | يشمل مواسم المسلسلات |
@@ -827,5 +843,5 @@ close() -> None
 | `AppConfig` | كل إعدادات المستخدم |
 | `RedactionFilter` | حجب الأسرار من السجلات |
 | `QtLogHandler` | جسر السجل إلى الواجهة |
-| ثقب `background.jpg` | نسخة مطابقة من `fanart.jpg` لمشغلات مختلفة |
+| ثقب `background.jpg` | نوع مستقل: يُنزَّل من الشبكة إن طُلب وحده، لا نسخة من `fanart.jpg` |
 | المكتبة المسطحة | فيديوهات مباشرة دون مجلد لكل عمل |
