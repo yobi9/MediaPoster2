@@ -86,3 +86,42 @@ def test_clearing_output_root_restores_source_writes(
     window._sync_config_from_ui()
 
     assert window.config.output_root == ""
+
+
+def test_image_type_checkboxes_reflect_config(window) -> None:
+    """UI1: ثلاث رقائق (Poster/Fanart/Background) تُقرأ من AppConfig."""
+    window.config.download_poster = True
+    window.config.download_fanart = True
+    window.config.download_background = False
+
+    window._restore_state()
+
+    assert window.poster_chip.isChecked() is True
+    assert window.fanart_chip.isChecked() is True
+    assert window.background_chip.isChecked() is False
+
+
+def test_image_type_checkboxes_write_back(window) -> None:
+    """UI2: تغيير الرقائق يُحدّث AppConfig عبر _sync_config_from_ui."""
+    window.poster_chip.setChecked(False)
+    window.fanart_chip.setChecked(True)
+    window.background_chip.setChecked(True)
+
+    window._sync_config_from_ui()
+
+    assert window.config.download_poster is False
+    assert window.config.download_fanart is True
+    assert window.config.download_background is True
+
+
+def test_all_image_types_off_shows_a_visual_warning(window) -> None:
+    """تعطيل الأنواع الثلاثة يُظهر تحذيراً بصرياً (ولا يمنع التشغيل)."""
+    window.poster_chip.setChecked(False)
+    window.fanart_chip.setChecked(False)
+    window.background_chip.setChecked(False)
+
+    assert window.images_warning.isHidden() is False
+
+    window.poster_chip.setChecked(True)
+
+    assert window.images_warning.isHidden() is True

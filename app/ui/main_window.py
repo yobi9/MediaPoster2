@@ -263,9 +263,17 @@ class MainWindow(QMainWindow):
             "استبدال الصور الموجودة",
             "إعادة تنزيل الملصق والخلفية حتى لو كانا موجودين.",
         )
+        self.poster_chip = self._chip(
+            "Poster",
+            "تنزيل poster.jpg (الملصق القياسي).",
+        )
+        self.fanart_chip = self._chip(
+            "Fanart",
+            "تنزيل fanart.jpg (الخلفية الأفقية القياسية).",
+        )
         self.background_chip = self._chip(
-            "إنشاء background.jpg",
-            "نسخة إضافية من الخلفية بجانب fanart.jpg (متوافق مع مشغلات مختلفة).",
+            "Background",
+            "تنزيل background.jpg من نفس بيانات الخلفية (متوافق مع مشغلات مختلفة).",
         )
         self.convert_chip = self._chip(
             "تحويل WebP الموجود",
@@ -285,6 +293,8 @@ class MainWindow(QMainWindow):
         )
         chip_list = (
             self.overwrite_chip,
+            self.poster_chip,
+            self.fanart_chip,
             self.background_chip,
             self.convert_chip,
             self.nested_chip,
@@ -296,11 +306,22 @@ class MainWindow(QMainWindow):
             chips.addWidget(chip, row_index, col_index)
         grid.addLayout(chips, 4, 0, 1, 3)
 
+        self.images_warning = QLabel(
+            "تحذير: كل أنواع الصور معطّلة — لن يُنزَّل أي ملف صورة."
+        )
+        self.images_warning.setObjectName("Muted")
+        self.images_warning.setWordWrap(True)
+        self.images_warning.setStyleSheet("color: #f0a53a;")
+        self.images_warning.setVisible(False)
+        grid.addWidget(self.images_warning, 5, 0, 1, 3)
+
         self.mode_hint = QLabel()
         self.mode_hint.setObjectName("Muted")
         self.mode_hint.setWordWrap(True)
-        grid.addWidget(self.mode_hint, 5, 0, 1, 3)
+        grid.addWidget(self.mode_hint, 6, 0, 1, 3)
 
+        for chip in (self.poster_chip, self.fanart_chip, self.background_chip):
+            chip.toggled.connect(self._update_images_warning)
         self.dry_chip.toggled.connect(self._update_mode_hint)
         self.convert_only_chip.toggled.connect(self._update_mode_hint)
 
@@ -505,7 +526,9 @@ class MainWindow(QMainWindow):
         self._select_combo(self.media_combo, cfg.media_filter)
 
         self.overwrite_chip.setChecked(cfg.overwrite_images)
-        self.background_chip.setChecked(cfg.create_background_copy)
+        self.poster_chip.setChecked(cfg.download_poster)
+        self.fanart_chip.setChecked(cfg.download_fanart)
+        self.background_chip.setChecked(cfg.download_background)
         self.convert_chip.setChecked(cfg.convert_existing_webp)
         self.nested_chip.setChecked(cfg.convert_nested_webp)
         self.dry_chip.setChecked(cfg.dry_run)
@@ -547,7 +570,9 @@ class MainWindow(QMainWindow):
         if media_filter:
             cfg.media_filter = str(media_filter)
         cfg.overwrite_images = self.overwrite_chip.isChecked()
-        cfg.create_background_copy = self.background_chip.isChecked()
+        cfg.download_poster = self.poster_chip.isChecked()
+        cfg.download_fanart = self.fanart_chip.isChecked()
+        cfg.download_background = self.background_chip.isChecked()
         cfg.convert_existing_webp = self.convert_chip.isChecked()
         cfg.convert_nested_webp = self.nested_chip.isChecked()
         cfg.dry_run = self.dry_chip.isChecked()
@@ -557,6 +582,15 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             logger.warning("تعذر حفظ الإعدادات: %s", exc)
 
+    def _update_images_warning(self) -> None:
+        """تحذير بصري فقط عند تعطيل الأنواع الثلاثة — لا منع للتشغيل."""
+        all_off = not (
+            self.poster_chip.isChecked()
+            or self.fanart_chip.isChecked()
+            or self.background_chip.isChecked()
+        )
+        self.images_warning.setVisible(all_off)
+
     def _update_mode_hint(self) -> None:
         if self.convert_only_chip.isChecked():
             text = "وضع التحويل فقط: تحويل ملفات WebP الموجودة إلى JPG دون الاتصال بـ TMDB."
@@ -565,8 +599,9 @@ class MainWindow(QMainWindow):
         elif self.overwrite_chip.isChecked():
             text = "سيتم استبدال الملصقات والخلفيات الموجودة، مع تحويل ملفات WebP عند تفعيله."
         else:
-            text = "سيتم تنزيل poster.jpg و fanart.jpg فقط عند غيابهما، مع تحويل ملفات WebP الموجودة."
+            text = "سيتم تنزيل أنواع الصور المحددة عند غيابها، مع تحويل ملفات WebP الموجودة."
         self.mode_hint.setText(text)
+        self._update_images_warning()
         if not self._running:
             enabled = not self.convert_only_chip.isChecked()
             self.token_edit.setEnabled(enabled)
@@ -861,6 +896,8 @@ class MainWindow(QMainWindow):
             self.quality_combo,
             self.media_combo,
             self.overwrite_chip,
+            self.poster_chip,
+            self.fanart_chip,
             self.background_chip,
             self.convert_chip,
             self.nested_chip,
