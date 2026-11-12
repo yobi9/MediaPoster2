@@ -85,7 +85,7 @@ def run_with(
     monkeypatch.setattr(
         cli,
         "discover_media",
-        lambda root, media_filter="all": [
+        lambda root, media_filter="all", **kwargs: [
             MediaItem(path=item_folder, kind=MediaKind.MOVIE, title="عنصر", year=2020)
         ],
     )
@@ -125,7 +125,7 @@ def run_and_capture_config(
     monkeypatch.setattr(
         cli,
         "discover_media",
-        lambda root, media_filter="all": [
+        lambda root, media_filter="all", **kwargs: [
             MediaItem(path=item_folder, kind=MediaKind.MOVIE, title="عنصر", year=2020)
         ],
     )

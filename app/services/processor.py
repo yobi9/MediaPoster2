@@ -342,6 +342,7 @@ class Processor:
                 recursive=(cfg.convert_nested_webp and item.kind is MediaKind.SERIES),
                 overwrite=cfg.overwrite_images,
                 dry_run=cfg.dry_run,
+                should_cancel=self.images.cancel_check,
             )
             if conversion.converted:
                 logger.info(
@@ -355,6 +356,10 @@ class Processor:
                     item.title,
                     conversion.would_convert,
                 )
+
+        if conversion.cancelled:
+            logger.warning("%s: أُلغي تحويل WebP.", item.title)
+            return ItemResult(item=item, status=Status.CANCELLED, message="تم الإلغاء.")
 
         if cfg.convert_only:
             return self._conversion_only_result(item, conversion)

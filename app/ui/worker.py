@@ -55,12 +55,20 @@ class RunWorker(QThread):
         self.root = root
         self.token = token
 
+    def _should_cancel(self) -> bool:
+        """طلب الإيقاف من زر «إيقاف» في الواجهة (QThread.requestInterruption)."""
+        return self.isInterruptionRequested()
+
     def run(self) -> None:  # noqa: D401 - Qt entry point
         client: TMDBClient | None = None
         processor: Processor | None = None
         try:
             self.progress.emit(0, 0, "جارٍ فحص المجلدات...")
-            items = discover_media(self.root, self.config.media_filter)
+            items = discover_media(
+                self.root,
+                self.config.media_filter,
+                should_cancel=self._should_cancel,
+            )
             logger.info("تم العثور على %d عنصر قابل للمعالجة.", len(items))
 
             if self.isInterruptionRequested():
@@ -85,12 +93,12 @@ class RunWorker(QThread):
             images = ImageService(
                 quality=self.config.jpeg_quality,
                 timeout=self.config.request_timeout,
-                cancel_check=self.isInterruptionRequested,
+                cancel_check=self._should_cancel,
             )
             processor = Processor(self.config, client=client, images=images)
             summary = processor.run(
                 items,
-                should_cancel=self.isInterruptionRequested,
+                should_cancel=self._should_cancel,
                 on_item=self.item_done.emit,
                 on_progress=self.progress.emit,
             )

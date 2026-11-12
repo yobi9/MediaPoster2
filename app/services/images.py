@@ -42,6 +42,8 @@ class ConversionResult:
     #: عدد الملفات التي "سيتم" تحويلها في وضع المعاينة (dry_run).
     #: يبقى ``converted`` صفراً في المعاينة لأن شيئاً لم يُنفَّذ فعلياً.
     would_convert: int = 0
+    #: أُلغي الفحص/التحويل بطلب من المستخدم قبل إنهاء كل الملفات.
+    cancelled: bool = False
 
     @property
     def touched(self) -> bool:
@@ -146,9 +148,14 @@ def convert_webp_in_folder(
     recursive: bool = False,
     overwrite: bool = False,
     dry_run: bool = False,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> ConversionResult:
     result = ConversionResult()
     for source in _iter_webp(Path(folder), recursive):
+        if should_cancel is not None and should_cancel():
+            result.cancelled = True
+            logger.info("تم إيقاف تحويل WebP يدوياً بعد %d ملف.", result.converted)
+            break
         target = source.with_suffix(".jpg")
         if target.exists() and not overwrite:
             result.skipped += 1

@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
+from typing import Callable
 
 from ..logging_setup import get_logger
 from ..models import MediaItem, MediaKind
@@ -91,10 +92,17 @@ def has_episode_marker(name: str) -> bool:
     return bool(_EPISODE_MARKER_RE.search(Path(name).stem))
 
 
-def discover_media(root: Path | str, media_filter: str = "all") -> list[MediaItem]:
+def discover_media(
+    root: Path | str,
+    media_filter: str = "all",
+    *,
+    should_cancel: Callable[[], bool] | None = None,
+) -> list[MediaItem]:
     """Return artwork targets under *root*.
 
     ``media_filter`` is one of ``all``, ``movies`` or ``series``.
+    When ``should_cancel`` returns True the walk stops between folders and the
+    items discovered so far are returned (a NAS scan can take minutes).
     """
     root_path = Path(root).expanduser().resolve()
     if not root_path.is_dir():
@@ -113,6 +121,9 @@ def discover_media(root: Path | str, media_filter: str = "all") -> list[MediaIte
     visited: set[Path] = set()
 
     for dirpath, dirnames, filenames in os.walk(root_path, topdown=True, followlinks=False):
+        if should_cancel is not None and should_cancel():
+            logger.info("تم إيقاف الفحص يدوياً بعد %d عنصر.", len(items))
+            break
         current = Path(dirpath)
 
         try:

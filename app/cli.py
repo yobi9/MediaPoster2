@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 import sys
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 from .config import (
     BACKDROP_SIZES,
+    DEFAULT_MAX_WORKERS,
     MAX_JPEG_QUALITY,
+    MAX_MAX_WORKERS,
     MEDIA_FILTERS,
     MIN_JPEG_QUALITY,
+    MIN_MAX_WORKERS,
     POSTER_SIZES,
     AppConfig,
     VERSION,
@@ -41,6 +47,40 @@ def _quality_value(text: str) -> int:
             f"جودة الصور يجب أن تكون بين {MIN_JPEG_QUALITY} و {MAX_JPEG_QUALITY}."
         )
     return value
+
+
+def _max_workers_value(text: str) -> int:
+    """قابل لـ--max-workers: يرفض فوراً أي قيمة خارج 1–8."""
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"عدد المهام المتوازية يجب أن يكون عدداً صحيحاً بين {MIN_MAX_WORKERS} "
+            f"و {MAX_MAX_WORKERS}."
+        ) from None
+    if not (MIN_MAX_WORKERS <= value <= MAX_MAX_WORKERS):
+        raise argparse.ArgumentTypeError(
+            f"عدد المهام المتوازية يجب أن يكون بين {MIN_MAX_WORKERS} "
+            f"و {MAX_MAX_WORKERS}."
+        )
+    return value
+
+
+@contextmanager
+def _sigint_cancellation(event: threading.Event):
+    """حوّل Ctrl+C إلى طلب إلغاء تعاوني بدل استثناء في منتصف الكتابة."""
+    try:
+        previous = signal.signal(signal.SIGINT, lambda _signum, _frame: event.set())
+    except (ValueError, OSError):  # ليس الخيط الرئيسي: يبقى KeyboardInterrupt
+        previous = None
+    try:
+        yield
+    finally:
+        if previous is not None:
+            try:
+                signal.signal(signal.SIGINT, previous)
+            except (ValueError, OSError):  # pragma: no cover - defensive
+                pass
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -74,6 +114,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="بحث فقط بدون تنزيل أو تحويل.")
     parser.add_argument("--convert-only", action="store_true", help="تحويل WebP إلى JPG فقط بدون TMDB.")
     parser.add_argument("--no-cache", action="store_true", help="تعطيل كاش TMDB لهذه الجلسة.")
+    parser.add_argument(
+        "--max-workers",
+        type=_max_workers_value,
+        help=(
+            f"عدد المهام المتوازية ({MIN_MAX_WORKERS}–{MAX_MAX_WORKERS}، "
+            f"الافتراضي {DEFAULT_MAX_WORKERS}؛ 1 = تسلسلي تماماً)."
+        ),
+    )
     parser.add_argument(
         "--fail-on-not-found",
         action="store_true",
@@ -133,6 +181,8 @@ def run_cli(args: argparse.Namespace) -> int:
     config.dry_run = bool(args.dry_run)
     config.convert_only = bool(args.convert_only)
     config.use_cache = not args.no_cache
+    if args.max_workers is not None:
+        config.max_workers = args.max_workers
 
     setup_logging(console=True, level=logging.DEBUG if args.verbose else logging.INFO)
     logger = get_logger("cli")
@@ -164,11 +214,35 @@ def run_cli(args: argparse.Namespace) -> int:
         config.media_filter,
     )
 
+    cancel_event = threading.Event()
     try:
-        items = discover_media(root, config.media_filter)
+        with _sigint_cancellation(cancel_event):
+            return _run_library(config, args, root, token, cancel_event)
+    except KeyboardInterrupt:
+        # SIGINT قبل تركيب المعالج (أو في خيط غير رئيسي).
+        logger.warning("تم الإلغاء بواسطة المستخدم.")
+        return 130
+
+
+def _run_library(
+    config: AppConfig,
+    args: argparse.Namespace,
+    root: Path,
+    token: str,
+    cancel_event: threading.Event,
+) -> int:
+    logger = get_logger("cli")
+    try:
+        items = discover_media(
+            root, config.media_filter, should_cancel=cancel_event.is_set
+        )
     except OSError as exc:
         logger.error("تعذر فحص المكتبة: %s", exc)
         return 2
+
+    if cancel_event.is_set():
+        logger.warning("تم الإلغاء بواسطة المستخدم. 0 عنصر مُعالَج قبل الإلغاء.")
+        return 130
 
     if args.limit and args.limit > 0:
         items = items[: args.limit]
@@ -201,10 +275,11 @@ def run_cli(args: argparse.Namespace) -> int:
             if done:
                 logger.info("[%d/%d] %s", done, total, title)
 
-        summary = processor.run(items, on_progress=on_progress)
-    except KeyboardInterrupt:
-        logger.warning("تم الإلغاء بواسطة المستخدم.")
-        return 130
+        summary = processor.run(
+            items,
+            should_cancel=cancel_event.is_set,
+            on_progress=on_progress,
+        )
     finally:
         if processor:
             processor.close()
@@ -222,6 +297,12 @@ def run_cli(args: argparse.Namespace) -> int:
                 f"- [{result.status.label_ar}] {result.item.title}"
                 f" ({result.item.kind.label_ar}) — {result.message}"
             )
+    if summary.cancelled or cancel_event.is_set():
+        logger.warning(
+            "تم الإلغاء بواسطة المستخدم. %d عنصر مُعالَج قبل الإلغاء.",
+            len(summary.results),
+        )
+        return 130
     if summary.errors:
         return 1
     if getattr(args, "fail_on_not_found", False) and summary.not_found:
