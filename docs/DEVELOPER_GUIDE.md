@@ -460,8 +460,8 @@ raw
    `ERROR` مع `target_writable=False` ورسالة `مجلد الهدف غير قابل للكتابة: <path>`.
    > `os.access(folder, os.W_OK)` **غير موثوق على ويندوز**: يُرجع `True` لمجلدات مرفوضة
    > الصلاحية ومشاركات القراءة فقط. الفحص الصحيح هو إنشاء ملف مُسقِط مؤقت وحذفه.
-   > (عند تفعيل `output_root` في v1.1 تختفي حالة «المشاركة قراءة فقط» لأن الكتابة تنتقل
-   > إلى شجرة أخرى.)
+   > مع `output_root` يتم الفحص على مجلد الإخراج لا على المصدر، فتختفي حالة
+   > «المشاركة قراءة فقط» (انظر 11.3).
 1. **تحويل WebP** حسب الإعدادات (متكرر للمسلسلات فقط عند التفعيل).
 2. إن كان `convert_only` → `_conversion_only_result` وانتهى.
 3. تحديد الأسماء: `poster.jpg`، `fanart.jpg`، و`background.jpg` إن مُفعّل.
@@ -493,7 +493,50 @@ raw
 `ItemResult` يحمل: `status`, `message`, `matched_title`, `poster_saved`, `backdrop_saved`,
 `webp_converted`, `dry_run`.
 
-### 11.3 الملخص
+### 11.3 `output_root` و manifest (B2/P13)
+
+عند ضبط `output_root` (من `config.json`، أو `--output-root` في CLI) تنتقل كل الكتابة من
+مجلد العمل إلى شجرة موازية:
+
+| العنصر | بلا `output_root` | مع `output_root` |
+|---|---|---|
+| مسار الكتابة | `item.path` | `output_root / item.path.relative_to(library_path)` |
+| فحص الكتابة | مجلد العمل | مجلد الإخراج |
+| `poster.jpg` / `fanart.jpg` / `background.jpg` / `folder.jpg` | في المصدر | في شجرة الإخراج |
+| تحويل WebP داخل المصدر | يعمل | يُعطَّل (يكتب بجوار المصدر) |
+| `.mediaart_manifest.json` | لا يوجد | يُحدَّث بعد كل عنصر |
+
+قواعد أساسية (`_target_dir`, `app/services/processor.py`):
+
+- المسار النسبي يُحسب من `library_path`؛ عنصر خارج الجذر يُكتب في مكانه الأصلي مع تحذير
+  (كما في المواصفة)، فلا يُفقد شيء بصمت.
+- `output_root == library_path` ⇒ يُتجاهل تماماً (سلوك كأن الخيار غير مضبوط، بلا manifest).
+- `AppConfig.output_root` نوعه **`str`** لا `Path`: الإعدادات تُسلسَل بـ`asdict` ثم
+  `json.dumps`، و`Path` غير قابل للتسلسل. التحقق في `ensure_output_root()` (إنشاء +
+  ملف فحص) ويُطلق `ValueError` برسالة عربية.
+- `from_dict` تُسقط `output_root` غير القابل للكتابة (مشاركة غير متصلة) بدل إفشال الإعداد
+  كله — نفس مبدأ «إعداد تالف لا يمنع الإقلاع».
+
+**manifest** (`app/services/manifest.py`):
+
+```json
+{"version": 1,
+ "entries": {"Inception (2010)": {
+    "files": ["background.jpg", "fanart.jpg", "poster.jpg"],
+    "ts": "2026-11-12T14:02:11+00:00",
+    "status": "ok"}}}
+```
+
+- الكتابة ذرّية (`mkstemp` + `os.replace`)، وتحدث **بعد كل عنصر** — إغلاق مفاجئ لا يُفقد
+  العمل المكتمل.
+- `update_entry` يُرجع `changed=False` إن تطابقت الملفات والحالة ⇒ لا كتابة ولا تغيير في
+  `ts`، فيبقى الملف مطابقاً بايتاً ببايت عند إعادة التشغيل على شجرة مكتملة.
+- الحالة تُشتق من `ItemResult.status`: `ERROR` ⇒ `error`، `PARTIAL` ⇒ `partial`، وإلا
+  `ok` إن وُجدت ملفات؛ و`PREVIEW`/`NOT_FOUND`/`CANCELLED` لا تُسجَّل.
+- ملفات موجودة في شجرة الإخراج بلا مدخل في manifest ⇒ تحذير «تخطّي: الملف موجود مسبقاً
+  بلا سجل» (لا استبدال تلقائي).
+
+### 11.4 الملخص
 
 `RunSummary` يحسب `ok`, `partial`, `succeeded`, `skipped`, `not_found`, `errors`,
 `cancelled_count`, `preview`، ويجمع `webp_converted` و`webp_would_convert`. `summary_text()`
@@ -557,14 +600,17 @@ raw
 |---|---|---|---|---|
 | `tmdb_api_key` | str | `""` | v3 أو v4 | يُستخدم إن لم يوجد متغير بيئة |
 | `library_path` | str | `""` | مسار | جذر المكتبة |
+| `output_root` | str | `""` | مسار قابل للكتابة | مجلد إخراج بديل للصور (انظر 11.3) |
 | `language` | str | `"ar"` | `ar,en,fr,de,es,tr,ja,ko` | لغة البحث والصور |
+| `poster_size` | str | `"w500"` | `w185,w342,w500,w780,original` | دقة الملصق المطلوب من TMDB |
+| `backdrop_size` | str | `"w780"` | `w300,w780,w1280,original` | دقة الخلفية المطلوبة |
 | `jpeg_quality` | int | `95` | 60..100 | جودة إعادة الترميز |
 | `overwrite_images` | bool | `False` | — | استبدال الصور وحذف WebP رغم وجود JPG |
 | `create_background_copy` | bool | `True` | — | نسخة `background.jpg` |
 | `create_folder_thumbnail` | bool | `False` | — | نسخة `folder.jpg` (من config/CLI فقط) |
 | `convert_existing_webp` | bool | `True` | — | تحويل WebP داخل مجلد العمل |
 | `convert_nested_webp` | bool | `False` | — | يشمل مواسم المسلسلات |
-| `prefer_localized_artwork` | bool | `True` | — | تفضيل صور لغة المستخدم |
+| `prefer_localized_artwork` | bool | `False` | — | تفضيل صور لغة المستخدم (يرفع الطلبات ~50%) |
 | `dry_run` | bool | `False` | — | بحث فقط بلا كتابة |
 | `convert_only` | bool | `False` | — | بلا TMDB |
 | `media_filter` | str | `"all"` | `all,movies,series` | تصفية الاكتشاف |
