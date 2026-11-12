@@ -8,9 +8,11 @@ import sys
 from pathlib import Path
 
 from .config import (
+    BACKDROP_SIZES,
     MAX_JPEG_QUALITY,
     MEDIA_FILTERS,
     MIN_JPEG_QUALITY,
+    POSTER_SIZES,
     AppConfig,
     VERSION,
     load_config,
@@ -74,7 +76,21 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="تجاهل الكاش السلبي وأعد البحث عن العناصر غير الموجودة في TMDB.",
     )
-    parser.add_argument("--verbose", action="store_true", help="سجل تفصيلي.")
+    parser.add_argument(
+        "--poster-size",
+        choices=list(POSTER_SIZES),
+        help="حجم الملصق المطلوب من TMDB (original = الدقة الكاملة وحجمها أكبر بعشر مرات).",
+    )
+    parser.add_argument(
+        "--backdrop-size",
+        choices=list(BACKDROP_SIZES),
+        help="حجم الخلفية المطلوبة من TMDB (original = الدقة الكاملة وحجمها أكبر بعشر مرات).",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="سجل تفصيلي.",
+    )
     parser.add_argument("--version", action="version", version=VERSION)
     return parser
 
@@ -93,6 +109,10 @@ def run_cli(args: argparse.Namespace) -> int:
         config.jpeg_quality = args.quality
     if args.media:
         config.media_filter = args.media
+    if args.poster_size:
+        config.poster_size = args.poster_size
+    if args.backdrop_size:
+        config.backdrop_size = args.backdrop_size
     config.overwrite_images = bool(args.overwrite or config.overwrite_images)
     config.dry_run = bool(args.dry_run)
     config.convert_only = bool(args.convert_only)
@@ -147,6 +167,8 @@ def run_cli(args: argparse.Namespace) -> int:
                 prefer_localized_artwork=config.prefer_localized_artwork,
                 negative_cache_ttl_days=config.negative_cache_ttl_days,
                 refresh_negatives=bool(args.refresh_negatives),
+                poster_size=config.poster_size,
+                backdrop_size=config.backdrop_size,
             )
         images = ImageService(quality=config.jpeg_quality, timeout=config.request_timeout)
         processor = Processor(config, client=client, images=images)

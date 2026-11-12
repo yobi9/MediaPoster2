@@ -269,6 +269,32 @@ def test_quality_default_is_95(
 
 
 # ---------------------------------------------------------------------------
+# أحجام الصور (A1)
+# ---------------------------------------------------------------------------
+def test_poster_size_option_reaches_the_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A1-5: --poster-size w342 ⇒ AppConfig.poster_size = w342."""
+    code, config = run_and_capture_config(
+        monkeypatch, tmp_path, "--poster-size", "w342"
+    )
+
+    assert code == 0
+    assert config.poster_size == "w342"
+
+
+def test_poster_size_option_rejects_unknown_value(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A1-6: --poster-size bogus ⇒ parser.error (خروج 2)."""
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(["--cli", "--poster-size", "bogus"])
+
+    assert excinfo.value.code == 2
+    assert "poster-size" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
 # --refresh-negatives (A2 / N6)
 # ---------------------------------------------------------------------------
 def test_refresh_negatives_reaches_the_client(

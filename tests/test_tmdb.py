@@ -4,6 +4,8 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 from app.models import MediaItem, MediaKind
 from app.services.title_cleaner import normalize_for_match
 from app.services.tmdb import (
@@ -96,6 +98,46 @@ def test_image_url() -> None:
     assert image_url("/abc.jpg") == "https://image.tmdb.org/t/p/original/abc.jpg"
     assert image_url(None) is None
     assert image_url("https://example.com/x.jpg") == "https://example.com/x.jpg"
+
+
+# ----------------------------------------------------------------------
+# أحجام الصور (A1)
+# ----------------------------------------------------------------------
+def test_image_url_uses_the_requested_size() -> None:
+    """A1-1: الحجم المطلوب يظهر في الرابط."""
+    url = image_url("abc.jpg", "w500")
+
+    assert url is not None
+    assert "/t/p/w500/abc.jpg" in url
+
+
+def test_image_url_supports_original() -> None:
+    """A1-2: original ما زال مدعوماً."""
+    url = image_url("abc.jpg", "original")
+
+    assert url is not None
+    assert "/t/p/original/abc.jpg" in url
+
+
+def test_default_image_sizes(tmp_path: Path) -> None:
+    """A1-3: الافتراضيات w500 للملصق وw780 للخلفية."""
+    from app.config import AppConfig
+
+    config = AppConfig()
+
+    assert config.poster_size == "w500"
+    assert config.backdrop_size == "w780"
+
+
+def test_invalid_poster_size_is_rejected() -> None:
+    """A1-4: حجم غير مسموح ⇒ ValueError برسالة عربية."""
+    from app.config import AppConfig
+
+    with pytest.raises(ValueError) as excinfo:
+        AppConfig(poster_size="huge")
+
+    assert "poster_size" in str(excinfo.value)
+    assert "w500" in str(excinfo.value)
 
 
 def test_bearer_detection() -> None:
@@ -357,3 +399,21 @@ def test_negative_cache_is_bound_to_the_title(tmp_path: Path) -> None:
     match_alpha = client.find_match(_item("Alpha"), force_refresh=True)
     assert match_alpha is not None
     assert match_alpha.title == "Alpha"
+
+
+def test_match_uses_the_configured_sizes(tmp_path: Path) -> None:
+    """A1-7: find_match يبني الروابط بالحجم المطلوب."""
+    client = _CountingTMDB(tmp_path, {"ar": [], "en": []})
+    client.poster_size = "w342"
+    client.backdrop_size = "w1280"
+    client.by_query = {
+        "Matrix": [movie(title="Matrix", original_title="Matrix")],
+    }
+
+    match = client.find_match(_item("Matrix"))
+
+    assert match is not None
+    assert match.poster_path is not None
+    assert "/w342/" in match.poster_path
+    assert match.backdrop_path is not None
+    assert "/w1280/" in match.backdrop_path

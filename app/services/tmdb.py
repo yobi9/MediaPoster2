@@ -74,6 +74,8 @@ class TMDBClient:
         negative_cache_ttl_days: int | None = None,
         negative_cache_path: Path | None = None,
         refresh_negatives: bool = False,
+        poster_size: str | None = None,
+        backdrop_size: str | None = None,
     ) -> None:
         token = (token or "").strip()
         if not token:
@@ -84,6 +86,14 @@ class TMDBClient:
         self.max_retries = max(1, max_retries)
         self.prefer_localized_artwork = prefer_localized_artwork
         self.cross_type_fallback = cross_type_fallback
+        # Image sizes: "original" is the full resolution and is roughly ten
+        # times heavier, so the defaults are the sized variants.
+        if poster_size is None or backdrop_size is None:
+            saved = load_config()
+            poster_size = poster_size or saved.poster_size
+            backdrop_size = backdrop_size or saved.backdrop_size
+        self.poster_size = poster_size
+        self.backdrop_size = backdrop_size
 
         self._bearer = is_bearer_token(token)
         self._token = token
@@ -330,7 +340,17 @@ class TMDBClient:
         for result in results:
             score = score_candidate(result, media_type, query_norm, year)
             if score > 0:
-                scored.append((score, to_match(result, media_type)))
+                scored.append(
+                    (
+                        score,
+                        to_match(
+                            result,
+                            media_type,
+                            poster_size=self.poster_size,
+                            backdrop_size=self.backdrop_size,
+                        ),
+                    )
+                )
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return scored
 
@@ -370,9 +390,9 @@ class TMDBClient:
         poster = _pick_image(data.get("posters"), self.language, textless_first=False)
         backdrop = _pick_image(data.get("backdrops"), self.language, textless_first=True)
         if poster:
-            match.poster_path = poster
+            match.poster_path = image_url(poster, self.poster_size)
         if backdrop:
-            match.backdrop_path = backdrop
+            match.backdrop_path = image_url(backdrop, self.backdrop_size)
 
 
 # ----------------------------------------------------------------------
@@ -442,7 +462,12 @@ def extract_result_year(result: dict, media_type: str) -> int | None:
         return None
 
 
-def to_match(result: dict, media_type: str) -> TMDBMatch:
+def to_match(
+    result: dict,
+    media_type: str,
+    poster_size: str = "original",
+    backdrop_size: str = "original",
+) -> TMDBMatch:
     title = result.get("title") or result.get("name") or ""
     original = result.get("original_title") or result.get("original_name") or title
     return TMDBMatch(
@@ -451,8 +476,8 @@ def to_match(result: dict, media_type: str) -> TMDBMatch:
         title=str(title),
         original_title=str(original),
         year=extract_result_year(result, media_type),
-        poster_path=result.get("poster_path") or None,
-        backdrop_path=result.get("backdrop_path") or None,
+        poster_path=image_url(result.get("poster_path"), poster_size),
+        backdrop_path=image_url(result.get("backdrop_path"), backdrop_size),
         popularity=_as_float(result.get("popularity")),
         vote_average=_as_float(result.get("vote_average")),
         overview=str(result.get("overview") or ""),

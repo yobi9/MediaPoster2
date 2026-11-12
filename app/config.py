@@ -38,6 +38,12 @@ MIN_JPEG_QUALITY = 60
 MAX_JPEG_QUALITY = 100
 DEFAULT_JPEG_QUALITY = 95
 
+# أحجام صور TMDB المتاحة (https://image.tmdb.org/t/p/{size}/{file_path}).
+POSTER_SIZES: tuple[str, ...] = ("w185", "w342", "w500", "w780", "original")
+BACKDROP_SIZES: tuple[str, ...] = ("w300", "w780", "w1280", "original")
+DEFAULT_POSTER_SIZE = "w500"
+DEFAULT_BACKDROP_SIZE = "w780"
+
 MEDIA_FILTERS: tuple[tuple[str, str], ...] = (
     ("all", "الكل (أفلام + مسلسلات)"),
     ("movies", "أفلام فقط"),
@@ -88,6 +94,10 @@ class AppConfig:
     convert_existing_webp: bool = True
     convert_nested_webp: bool = False
     prefer_localized_artwork: bool = True
+    #: أحجام الصور المطلوبة من TMDB ("original" = الدقة الكاملة، وحجمها
+    #: يقارب عشرة أضعاف).
+    poster_size: str = DEFAULT_POSTER_SIZE
+    backdrop_size: str = DEFAULT_BACKDROP_SIZE
 
     dry_run: bool = False
     convert_only: bool = False
@@ -122,6 +132,18 @@ class AppConfig:
         if not 1 <= negative_ttl <= 365:
             raise ValueError("negative_cache_ttl_days يجب أن يكون بين 1 و 365.")
         self.negative_cache_ttl_days = negative_ttl
+        if self.poster_size not in POSTER_SIZES:
+            raise ValueError(
+                "poster_size يجب أن يكون أحد: "
+                + "، ".join(POSTER_SIZES)
+                + "."
+            )
+        if self.backdrop_size not in BACKDROP_SIZES:
+            raise ValueError(
+                "backdrop_size يجب أن يكون أحد: "
+                + "، ".join(BACKDROP_SIZES)
+                + "."
+            )
         try:
             self.min_request_interval = min(5.0, max(0.0, float(self.min_request_interval)))
         except (TypeError, ValueError):
@@ -157,6 +179,10 @@ class AppConfig:
         negative_ttl = cleaned.get("negative_cache_ttl_days")
         if negative_ttl is not None and not (1 <= int(negative_ttl) <= 365):
             cleaned.pop("negative_cache_ttl_days")
+        if cleaned.get("poster_size") not in POSTER_SIZES:
+            cleaned.pop("poster_size", None)
+        if cleaned.get("backdrop_size") not in BACKDROP_SIZES:
+            cleaned.pop("backdrop_size", None)
         return cls(**cleaned)
 
     def save(self, path: Path | None = None) -> None:
