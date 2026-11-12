@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
         self._started_at = 0.0
         self._running = False
         self._dark_titlebar_done = False
-        self._counts = {"succeeded": 0, "skipped": 0, "not_found": 0, "errors": 0}
+        self._counts = {"succeeded": 0, "skipped": 0, "not_found": 0, "errors": 0, "preview": 0}
         self._last_summary: RunSummary | None = None
 
         self.setWindowTitle(APP_NAME)
@@ -317,7 +317,14 @@ class MainWindow(QMainWindow):
         self.stat_skipped, self.stat_skipped_value = self._make_stat("متخطى", "#94A3B8")
         self.stat_not_found, self.stat_not_found_value = self._make_stat("غير موجود", "#FB923C")
         self.stat_errors, self.stat_errors_value = self._make_stat("أخطاء", "#F87171")
-        for box in (self.stat_ok, self.stat_skipped, self.stat_not_found, self.stat_errors):
+        self.stat_preview, self.stat_preview_value = self._make_stat("معاينة", "#A78BFA")
+        for box in (
+            self.stat_ok,
+            self.stat_skipped,
+            self.stat_not_found,
+            self.stat_errors,
+            self.stat_preview,
+        ):
             stats.addWidget(box)
         layout.addLayout(stats)
 
@@ -722,6 +729,8 @@ class MainWindow(QMainWindow):
             self._counts["not_found"] += 1
         elif result.status is Status.ERROR:
             self._counts["errors"] += 1
+        elif result.status is Status.PREVIEW:
+            self._counts["preview"] += 1
         self._update_stats()
 
     def _on_finished(self, summary: object) -> None:
@@ -818,7 +827,7 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(0)
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        self._counts = {"succeeded": 0, "skipped": 0, "not_found": 0, "errors": 0}
+        self._counts = {"succeeded": 0, "skipped": 0, "not_found": 0, "errors": 0, "preview": 0}
         self._update_stats()
         self.results_hint.setText("جارٍ المعالجة…")
         self.elapsed_label.setText("00:00")
@@ -830,6 +839,7 @@ class MainWindow(QMainWindow):
         self.stat_skipped_value.setText(str(self._counts["skipped"]))
         self.stat_not_found_value.setText(str(self._counts["not_found"]))
         self.stat_errors_value.setText(str(self._counts["errors"]))
+        self.stat_preview_value.setText(str(self._counts["preview"]))
 
     def _tick(self) -> None:
         if not self._running:

@@ -84,6 +84,7 @@ class Processor:
 
             summary.results.append(result)
             summary.webp_converted += result.webp_converted
+            summary.webp_would_convert += result.webp_would_convert
             if on_item:
                 on_item(result)
             if on_progress:
@@ -134,6 +135,12 @@ class Processor:
                     item.title,
                     conversion.converted,
                 )
+            elif conversion.would_convert:
+                logger.info(
+                    "%s: [معاينة] سيتم تحويل %d ملف WebP إلى JPG.",
+                    item.title,
+                    conversion.would_convert,
+                )
 
         if cfg.convert_only:
             return self._conversion_only_result(item, conversion)
@@ -155,13 +162,20 @@ class Processor:
         if not need_poster and not need_backdrop:
             self._ensure_folder_thumbnail(folder)
             message = "الصور القياسية موجودة مسبقاً."
-            if conversion.converted:
+            if cfg.dry_run:
+                if conversion.would_convert:
+                    message = (
+                        f"[معاينة] سيتم تحويل {conversion.would_convert} ملف WebP إلى JPG. "
+                        f"{message}"
+                    )
+            elif conversion.converted:
                 message = f"تم تحويل {conversion.converted} ملف WebP. {message}"
             return ItemResult(
                 item=item,
                 status=Status.SKIPPED,
                 message=message,
                 webp_converted=conversion.converted,
+                webp_would_convert=conversion.would_convert,
             )
 
         if self.client is None:
@@ -174,6 +188,7 @@ class Processor:
                 status=Status.NOT_FOUND,
                 message="لم يتم العثور على تطابق في TMDB.",
                 webp_converted=conversion.converted,
+                webp_would_convert=conversion.would_convert,
             )
 
         if not match.poster_path and not match.backdrop_path:
@@ -183,6 +198,7 @@ class Processor:
                 message=f"تم العثور على '{match.title}' لكن بدون ملصق أو خلفية.",
                 matched_title=match.title,
                 webp_converted=conversion.converted,
+                webp_would_convert=conversion.would_convert,
             )
 
         if cfg.dry_run:
@@ -192,12 +208,21 @@ class Processor:
             if need_backdrop and match.backdrop_path:
                 plans.append("الخلفية")
             detail = " و".join(plans) if plans else "لا توجد صور ناقصة"
+            message = (
+                f"[معاينة] تطابق: {match.title} ({match.year or '؟'}) "
+                f"— سيتم تنزيل: {detail}"
+            )
+            if conversion.would_convert:
+                message += (
+                    f" — وسيتم تحويل {conversion.would_convert} ملف WebP إلى JPG"
+                )
             return ItemResult(
                 item=item,
-                status=Status.OK,
-                message=f"[معاينة] تطابق: {match.title} ({match.year or '؟'}) — سيتم تنزيل: {detail}",
+                status=Status.PREVIEW,
+                message=message,
                 matched_title=match.title,
                 webp_converted=conversion.converted,
+                webp_would_convert=conversion.would_convert,
                 dry_run=True,
             )
 
@@ -282,13 +307,24 @@ class Processor:
             poster_saved=poster_saved,
             backdrop_saved=backdrop_saved,
             webp_converted=conversion.converted,
+            webp_would_convert=conversion.would_convert,
         )
 
     # ------------------------------------------------------------------
     def _conversion_only_result(self, item: MediaItem, conversion: ConversionResult) -> ItemResult:
+        dry_run = self.config.dry_run
         if conversion.failed and not conversion.converted:
             status = Status.ERROR
             message = f"فشل تحويل {conversion.failed} ملف WebP."
+        elif dry_run:
+            if conversion.would_convert:
+                status = Status.PREVIEW
+                message = (
+                    f"[معاينة] سيتم تحويل {conversion.would_convert} ملف WebP إلى JPG."
+                )
+            else:
+                status = Status.SKIPPED
+                message = "لا توجد ملفات WebP قابلة للتحويل."
         elif conversion.converted:
             status = Status.OK
             message = f"تم تحويل {conversion.converted} ملف WebP إلى JPG."
@@ -300,7 +336,8 @@ class Processor:
             status=status,
             message=message,
             webp_converted=conversion.converted,
-            dry_run=self.config.dry_run,
+            webp_would_convert=conversion.would_convert,
+            dry_run=dry_run,
         )
 
     def _mirror_backdrops(self, folder: Path, names: list[str]) -> None:

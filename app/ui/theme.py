@@ -30,6 +30,7 @@ STATUS_COLORS: dict[Status, str] = {
     Status.NOT_FOUND: "#FB923C",
     Status.ERROR: "#F87171",
     Status.CANCELLED: "#94A3B8",
+    Status.PREVIEW: "#A78BFA",
 }
 
 LEVEL_COLORS: dict[str, str] = {

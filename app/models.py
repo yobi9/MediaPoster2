@@ -27,6 +27,7 @@ class Status(str, Enum):
     NOT_FOUND = "not_found"
     ERROR = "error"
     CANCELLED = "cancelled"
+    PREVIEW = "preview"
 
     @property
     def label_ar(self) -> str:
@@ -37,6 +38,7 @@ class Status(str, Enum):
             Status.NOT_FOUND: "غير موجود",
             Status.ERROR: "خطأ",
             Status.CANCELLED: "ملغى",
+            Status.PREVIEW: "معاينة",
         }[self]
 
 
@@ -117,6 +119,8 @@ class ItemResult:
     poster_saved: bool = False
     backdrop_saved: bool = False
     webp_converted: int = 0
+    #: عدد ملفات WebP التي "سيتم" تحويلها (وضع المعاينة فقط).
+    webp_would_convert: int = 0
     dry_run: bool = False
     target_writable: bool = True
 
@@ -132,6 +136,7 @@ class RunSummary:
     duration: float = 0.0
     cancelled: bool = False
     webp_converted: int = 0
+    webp_would_convert: int = 0
 
     def _count(self, *statuses: Status) -> int:
         return sum(1 for result in self.results if result.status in statuses)
@@ -164,6 +169,10 @@ class RunSummary:
     def cancelled_count(self) -> int:
         return self._count(Status.CANCELLED)
 
+    @property
+    def preview(self) -> int:
+        return self._count(Status.PREVIEW)
+
     def summary_text(self) -> str:
         parts = [
             f"الإجمالي: {self.total}",
@@ -172,8 +181,12 @@ class RunSummary:
             f"غير موجود: {self.not_found}",
             f"أخطاء: {self.errors}",
         ]
+        if self.preview:
+            parts.append(f"معاينة: {self.preview}")
         if self.webp_converted:
             parts.append(f"WebP→JPG: {self.webp_converted}")
+        if self.webp_would_convert:
+            parts.append(f"سيتم تحويل WebP: {self.webp_would_convert}")
         if self.cancelled:
             parts.append("تم الإيقاف يدوياً")
         return " • ".join(parts)

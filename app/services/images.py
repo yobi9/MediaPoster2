@@ -39,6 +39,9 @@ class ConversionResult:
     converted: int = 0
     skipped: int = 0
     failed: int = 0
+    #: عدد الملفات التي "سيتم" تحويلها في وضع المعاينة (dry_run).
+    #: يبقى ``converted`` صفراً في المعاينة لأن شيئاً لم يُنفَّذ فعلياً.
+    would_convert: int = 0
 
     @property
     def touched(self) -> bool:
@@ -152,7 +155,9 @@ def convert_webp_in_folder(
             logger.debug("WebP موجود و JPG موجود، تخطي: %s", source)
             continue
         if dry_run:
-            result.converted += 1
+            # المعاينة لا تُنفّذ شيئاً: نُحصي التحويل المتوقّع فقط،
+            # ويبقى العدّاد converted صفراً حتى لا يُنسب تنفيذٌ لم يحدث.
+            result.would_convert += 1
             logger.info("[معاينة] سيتم تحويل: %s", source)
             continue
         try:

@@ -10,7 +10,7 @@ import pytest
 from PIL import Image
 
 from app.config import AppConfig
-from app.models import MediaItem, MediaKind, Status, TMDBMatch
+from app.models import MediaItem, MediaKind, RunSummary, Status, TMDBMatch
 from app.services.images import ImageService
 from app.services.processor import Processor
 
@@ -79,6 +79,12 @@ def make_match(base_url: str) -> TMDBMatch:
     )
 
 
+def make_webp(path: Path, size: tuple[int, int] = (40, 60)) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", size, (255, 0, 0, 128)).save(path, format="WEBP")
+    return path
+
+
 def test_process_downloads_poster_and_both_backdrops(tmp_path: Path, image_server: str) -> None:
     item = make_item(tmp_path)
     client = FakeClient(make_match(image_server))
@@ -129,10 +135,125 @@ def test_dry_run_does_not_write_files(tmp_path: Path, image_server: str) -> None
 
     result = processor.process_item(item)
 
-    assert result.status is Status.OK
+    assert result.status is Status.PREVIEW
     assert result.dry_run
     assert not (item.path / "poster.jpg").exists()
     assert not (item.path / "fanart.jpg").exists()
+    processor.close()
+
+
+def test_dry_run_convert_only_reports_preview_not_success(tmp_path: Path) -> None:
+    """وضع المعاينة + تحويل فقط: لا تنفيذ، ورسالة بصيغة المستقبل."""
+    item = make_item(tmp_path)
+    make_webp(item.path / "poster.webp")
+    config = AppConfig(dry_run=True, convert_only=True, convert_existing_webp=True)
+    processor = Processor(config, client=None, images=ImageService())
+
+    result = processor.process_item(item)
+
+    assert result.status is Status.PREVIEW
+    assert result.status is not Status.OK
+    assert result.webp_converted == 0
+    assert result.webp_would_convert == 1
+    assert "سيتم" in result.message
+    assert "[معاينة]" in result.message
+    # لا شيء كُتب على القرص: لا JPG جديد ولا حذف لمصدر WebP
+    assert not (item.path / "poster.jpg").exists()
+    assert (item.path / "poster.webp").exists()
+    processor.close()
+
+
+def test_dry_run_summary_separates_planned_from_done(tmp_path: Path) -> None:
+    """الملخص لا ينسب تحويلات لم تُنفّذ إلى الوضع الحقيقي."""
+    item = make_item(tmp_path)
+    make_webp(item.path / "poster.webp")
+    config = AppConfig(dry_run=True, convert_only=True, convert_existing_webp=True)
+    processor = Processor(config, client=None, images=ImageService())
+
+    summary = processor.run([item])
+
+    assert summary.webp_converted == 0
+    assert summary.webp_would_convert == 1
+    assert summary.preview == 1
+    assert summary.ok == 0
+    assert "معاينة: 1" in summary.summary_text()
+    assert "سيتم تحويل WebP: 1" in summary.summary_text()
+    processor.close()
+
+
+def test_summary_status_counts_cover_every_processed_item(
+    tmp_path: Path, image_server: str
+) -> None:
+    """مجموع حالات الملخص يجب أن يغطي كل عنصر مُعالَج بلا نقص أو تداخل."""
+    results = []
+
+    # نجاح كامل
+    ok_item = make_item(tmp_path, "Ok Movie (2010)")
+    ok_processor = Processor(
+        AppConfig(), client=FakeClient(make_match(image_server)), images=ImageService()
+    )
+    results.append(ok_processor.process_item(ok_item))
+    ok_processor.close()
+
+    # معاينة (dry-run)
+    preview_item = make_item(tmp_path, "Preview Movie (2011)")
+    preview_processor = Processor(
+        AppConfig(dry_run=True),
+        client=FakeClient(make_match(image_server)),
+        images=ImageService(),
+    )
+    results.append(preview_processor.process_item(preview_item))
+    preview_processor.close()
+
+    # غير موجود في TMDB
+    missing_item = make_item(tmp_path, "Missing Movie (2012)")
+    missing_processor = Processor(
+        AppConfig(), client=FakeClient(None), images=ImageService()
+    )
+    results.append(missing_processor.process_item(missing_item))
+    missing_processor.close()
+
+    # متخطى: الصور موجودة مسبقاً
+    skipped_item = make_item(tmp_path, "Existing Movie (2013)")
+    Image.new("RGB", (10, 10)).save(skipped_item.path / "poster.jpg", format="JPEG")
+    Image.new("RGB", (10, 10)).save(skipped_item.path / "fanart.jpg", format="JPEG")
+    skipped_processor = Processor(
+        AppConfig(), client=FakeClient(None), images=ImageService()
+    )
+    results.append(skipped_processor.process_item(skipped_item))
+    skipped_processor.close()
+
+    summary = RunSummary(total=len(results), results=results)
+    counted = (
+        summary.ok
+        + summary.partial
+        + summary.skipped
+        + summary.not_found
+        + summary.errors
+        + summary.cancelled_count
+        + summary.preview
+    )
+
+    assert counted == summary.total == len(results)
+    assert summary.ok == 1
+    assert summary.preview == 1
+    assert summary.not_found == 1
+    assert summary.skipped == 1
+
+
+def test_summary_text_hides_preview_section_without_previews(
+    tmp_path: Path, image_server: str
+) -> None:
+    """لا يظهر قسم «معاينة» في الملخص إذا لم توجد عناصر معروضة."""
+    item = make_item(tmp_path)
+    processor = Processor(
+        AppConfig(), client=FakeClient(make_match(image_server)), images=ImageService()
+    )
+
+    summary = processor.run([item])
+
+    assert summary.preview == 0
+    assert "معاينة:" not in summary.summary_text()
     processor.close()
 
 

@@ -49,7 +49,8 @@ def test_convert_folder_recursive_and_dry_run(tmp_path: Path) -> None:
     nested = make_webp(tmp_path / "Season 1" / "season.webp")
 
     preview = convert_webp_in_folder(tmp_path, recursive=True, dry_run=True)
-    assert preview.converted == 2
+    assert preview.converted == 0
+    assert preview.would_convert == 2
     assert first.exists() and nested.exists()
 
     result = convert_webp_in_folder(tmp_path, recursive=True)
@@ -57,6 +58,18 @@ def test_convert_folder_recursive_and_dry_run(tmp_path: Path) -> None:
     assert (tmp_path / "poster.jpg").is_file()
     assert (tmp_path / "Season 1" / "season.jpg").is_file()
     assert not first.exists() and not nested.exists()
+
+
+def test_dry_run_does_not_write_and_reports_would_convert(tmp_path: Path) -> None:
+    """المعاينة لا تكتب على القرص ولا تحسب تحويلات منفّذة."""
+    source = make_webp(tmp_path / "poster.webp")
+
+    preview = convert_webp_in_folder(tmp_path, dry_run=True)
+
+    assert preview.converted == 0
+    assert preview.would_convert == 1
+    assert source.exists()
+    assert not (tmp_path / "poster.jpg").exists()
 
 
 def test_convert_to_jpeg_accepts_png(tmp_path: Path) -> None:
