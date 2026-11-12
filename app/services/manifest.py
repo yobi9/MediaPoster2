@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -32,14 +33,19 @@ class OutputManifest:
         self._entries: dict[str, dict[str, Any]] = {}
         #: ملف بإصدار غير معروف لا يُقرأ ولا يُكتب فوقه أبداً.
         self._readonly = False
+        #: المعالج المتوازي يحدّث السجل من عدة خيوط؛ القفل يحمي القراءة/الكتابة
+        #: (RLock لأن update_entry يستدعي flush).
+        self._lock = threading.RLock()
         self._load()
 
     # ------------------------------------------------------------------
     def __len__(self) -> int:
-        return len(self._entries)
+        with self._lock:
+            return len(self._entries)
 
     def entry(self, key: str) -> dict[str, Any] | None:
-        return self._entries.get(key)
+        with self._lock:
+            return self._entries.get(key)
 
     def update_entry(self, key: str, files: list[str], status: str) -> bool:
         """Record one item. Returns True when the manifest actually changed.
@@ -50,41 +56,43 @@ class OutputManifest:
         if self._readonly:
             return False
         files = sorted(set(files))
-        previous = self._entries.get(key)
-        if (
-            previous is not None
-            and previous.get("files") == files
-            and previous.get("status") == status
-        ):
-            return False
-        self._entries[key] = {
-            "files": files,
-            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "status": status,
-        }
-        self.flush()
+        with self._lock:
+            previous = self._entries.get(key)
+            if (
+                previous is not None
+                and previous.get("files") == files
+                and previous.get("status") == status
+            ):
+                return False
+            self._entries[key] = {
+                "files": files,
+                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "status": status,
+            }
+            self.flush()
         return True
 
     # ------------------------------------------------------------------
     def flush(self) -> None:
-        if self._readonly:
-            return
-        payload = {"version": MANIFEST_VERSION, "entries": self._entries}
-        text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-        fd, tmp_name = tempfile.mkstemp(
-            prefix=".manifest-", suffix=".tmp", dir=str(self.path.parent)
-        )
-        tmp = Path(tmp_name)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(text)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp, self.path)
-        except OSError as exc:
-            logger.warning("تعذر تحديث manifest: %s", exc)
-        finally:
-            tmp.unlink(missing_ok=True)
+        with self._lock:
+            if self._readonly:
+                return
+            payload = {"version": MANIFEST_VERSION, "entries": self._entries}
+            text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=".manifest-", suffix=".tmp", dir=str(self.path.parent)
+            )
+            tmp = Path(tmp_name)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp, self.path)
+            except OSError as exc:
+                logger.warning("تعذر تحديث manifest: %s", exc)
+            finally:
+                tmp.unlink(missing_ok=True)
 
     def _load(self) -> None:
         try:

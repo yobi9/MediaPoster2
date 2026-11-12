@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
@@ -51,6 +53,7 @@ class Processor:
         self.library_root = _resolve_library_root(config)
         self.manifest = OutputManifest(self.output_root) if self.output_root else None
         self._warned_webp_skip = False
+        self._warn_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # output_root helpers (B2/P13)
@@ -146,6 +149,12 @@ class Processor:
         if should_cancel is not None:
             self.images.cancel_check = should_cancel
 
+        workers = _workers_for(self.config)
+        if workers > 1:
+            return self._run_items_parallel(
+                items, workers, should_cancel, on_item, on_progress
+            )
+
         total = len(items)
         for index, item in enumerate(items, start=1):
             if should_cancel and should_cancel():
@@ -192,6 +201,93 @@ class Processor:
             log_success(logger, "انتهت المعالجة: %s", summary.summary_text())
         return summary
 
+    def _run_items_parallel(
+        self,
+        items: list[MediaItem],
+        workers: int,
+        should_cancel: CancelCheck | None,
+        on_item: ItemCallback | None,
+        on_progress: ProgressCallback | None,
+    ) -> RunSummary:
+        """Process items on a small thread pool, reporting in input order.
+
+        Results are collected by submitting in order and then waiting on each
+        future in that same order, so the table never jumps. A failing item is
+        isolated inside its own task and cannot abort the rest of the run.
+        """
+        started = time.monotonic()
+        summary = RunSummary(total=len(items))
+        total = len(items)
+        cancelled = False
+
+        with ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="mediaart"
+        ) as pool:
+            futures = [
+                pool.submit(self._process_isolated, item, should_cancel)
+                for item in items
+            ]
+            try:
+                for index, (item, future) in enumerate(
+                    zip(items, futures), start=1
+                ):
+                    if should_cancel and should_cancel():
+                        cancelled = True
+                        break
+                    if on_progress:
+                        on_progress(index - 1, total, item.title)
+                    result = future.result()
+                    summary.results.append(result)
+                    self._record_manifest(item, result)
+                    summary.webp_converted += result.webp_converted
+                    summary.webp_would_convert += result.webp_would_convert
+                    if on_item:
+                        on_item(result)
+                    if result.status is Status.CANCELLED:
+                        cancelled = True
+                        break
+                    if on_progress:
+                        on_progress(index, total, item.title)
+                    if should_cancel and should_cancel():
+                        cancelled = True
+                        break
+            finally:
+                for future in futures:
+                    future.cancel()
+
+        summary.cancelled = cancelled
+        summary.duration = time.monotonic() - started
+        if summary.cancelled:
+            logger.warning(
+                "تم إيقاف المعالجة يدوياً بعد %d من %d عنصر.",
+                len(summary.results),
+                total,
+            )
+        else:
+            log_success(logger, "انتهت المعالجة: %s", summary.summary_text())
+        return summary
+
+    def _process_isolated(
+        self, item: MediaItem, should_cancel: CancelCheck | None
+    ) -> ItemResult:
+        """One task of a parallel run: never raises into the pool."""
+        if should_cancel and should_cancel():
+            return ItemResult(item=item, status=Status.CANCELLED, message="تم الإلغاء.")
+        try:
+            return self.process_item(item)
+        except CancelledError:
+            return ItemResult(item=item, status=Status.CANCELLED, message="تم الإلغاء.")
+        except MediaArtError as exc:
+            logger.error("فشل معالجة '%s': %s", item.title, exc)
+            return ItemResult(item=item, status=Status.ERROR, message=str(exc))
+        except Exception as exc:  # pragma: no cover - unexpected bug guard
+            logger.exception("خطأ غير متوقع أثناء معالجة '%s'", item.title)
+            return ItemResult(
+                item=item,
+                status=Status.ERROR,
+                message=f"خطأ غير متوقع: {exc.__class__.__name__}: {exc}",
+            )
+
     # ------------------------------------------------------------------
     def process_item(self, item: MediaItem) -> ItemResult:
         folder = item.path
@@ -225,13 +321,14 @@ class Processor:
             if self.output_root is not None:
                 # Converting WebP rewrites files next to the source images, so
                 # it cannot run against a read-only library.
-                if not self._warned_webp_skip:
-                    logger.warning(
-                        "تم تعطيل تحويل WebP لأن output_root مُعيَّن (التحويل "
-                        "يكتب بجوار المصدر). حوّل ملفات WebP يدوياً قبل التشغيل، "
-                        "أو شغّل بلا --output-root."
-                    )
-                    self._warned_webp_skip = True
+                with self._warn_lock:
+                    if not self._warned_webp_skip:
+                        logger.warning(
+                            "تم تعطيل تحويل WebP لأن output_root مُعيَّن (التحويل "
+                            "يكتب بجوار المصدر). حوّل ملفات WebP يدوياً قبل التشغيل، "
+                            "أو شغّل بلا --output-root."
+                        )
+                        self._warned_webp_skip = True
                 cfg_convert_webp = False
             else:
                 cfg_convert_webp = True
@@ -497,6 +594,15 @@ class Processor:
                 self.client.close()
         finally:
             self.images.close()
+
+
+def _workers_for(config: AppConfig) -> int:
+    """Number of parallel item tasks (AppConfig already clamps it to 1..8)."""
+    try:
+        value = int(getattr(config, "max_workers", 1) or 1)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(8, value))
 
 
 def _resolve_output_root(config: AppConfig) -> Path | None:

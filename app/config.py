@@ -44,6 +44,11 @@ BACKDROP_SIZES: tuple[str, ...] = ("w300", "w780", "w1280", "original")
 DEFAULT_POSTER_SIZE = "w500"
 DEFAULT_BACKDROP_SIZE = "w780"
 
+# حدود التوازي: 1 = تسلسلي تماماً (السلوك التاريخي)، 8 = أقصى توازٍ آمن.
+MIN_MAX_WORKERS = 1
+MAX_MAX_WORKERS = 8
+DEFAULT_MAX_WORKERS = 3
+
 MEDIA_FILTERS: tuple[tuple[str, str], ...] = (
     ("all", "الكل (أفلام + مسلسلات)"),
     ("movies", "أفلام فقط"),
@@ -110,6 +115,9 @@ class AppConfig:
     request_timeout: int = 20
     min_request_interval: float = 0.35
     max_retries: int = 3
+    #: عدد المهام المتوازية (1 = تسلسلي). التهدئة مشتركة داخل TMDBClient،
+    #: فالزيادة ترفع الإنتاجية دون تجاوز معدل الطلبات المسموح.
+    max_workers: int = DEFAULT_MAX_WORKERS
     use_cache: bool = True
     cache_ttl_days: int = 30
     #: عمر الكاش السلبي (عناصر غير موجودة في TMDB) بالأيام.
@@ -127,6 +135,9 @@ class AppConfig:
         )
         self.request_timeout = _clamp_int(self.request_timeout, 5, 120, 20)
         self.max_retries = _clamp_int(self.max_retries, 1, 10, 3)
+        self.max_workers = _clamp_int(
+            self.max_workers, MIN_MAX_WORKERS, MAX_MAX_WORKERS, DEFAULT_MAX_WORKERS
+        )
         self.cache_ttl_days = _clamp_int(self.cache_ttl_days, 1, 3650, 30)
         # Unlike the other knobs (which are clamped), an out-of-range negative
         # cache TTL is a configuration error and must be reported, not hidden.
