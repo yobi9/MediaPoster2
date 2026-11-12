@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,24 @@ from app.config import AppConfig
 from app.models import ItemResult, MediaItem, MediaKind, RunSummary, Status
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@contextmanager
+def _collect_cli_records():
+    """التقط سجلات logger "mediaart.cli" (mediaart.propagate=False)."""
+    logger = logging.getLogger("mediaart.cli")
+    records: list[logging.LogRecord] = []
+
+    class Collector(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = Collector()
+    logger.addHandler(handler)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
 
 
 class FakeProcessor:
@@ -353,3 +373,87 @@ def test_main_routes_to_gui_without_cli_flag(
 
     assert app_main.main() == 0
     assert called == [True]
+
+
+# ---------------------------------------------------------------------------
+# تغطية cli_main / main.main / __main__ (D7)
+# ---------------------------------------------------------------------------
+def test_cli_main_help_exits_zero() -> None:
+    """F1: cli_main(['--help']) ⇒ خرج 0 (argparse يطبع المساعدة)."""
+    with pytest.raises(SystemExit) as excinfo:
+        cli.cli_main(["--help"])
+
+    assert excinfo.value.code == 0
+
+
+def test_cli_main_with_missing_path_reports_arabic_error(tmp_path: Path) -> None:
+    """F2: مسار غير موجود ⇒ رسالة عربية واضحة بلا traceback."""
+    missing = tmp_path / "nope" / "missing"
+
+    with _collect_cli_records() as records:
+        code = cli.cli_main(["--cli", "--path", str(missing)])
+
+    assert code == 2
+    errors = [r.getMessage() for r in records if r.levelno >= logging.ERROR]
+    assert any("مسار المكتبة" in message for message in errors)
+    assert not any("Traceback" in message for message in errors)
+
+
+def test_cli_main_accepts_repeated_cli_flag(tmp_path: Path) -> None:
+    """F3: --cli مرتين ⇒ argparse يقبله (store_true) والسلوك واحد."""
+    args = cli.build_parser().parse_args(["--cli", "--cli"])
+    assert args.cli is True
+
+    missing = tmp_path / "missing-library"
+
+    with _collect_cli_records() as records:
+        code = cli.cli_main(["--cli", "--cli", "--path", str(missing)])
+
+    assert code == 2
+    assert not any("Traceback" in r.getMessage() for r in records)
+
+
+def test_main_routes_to_cli_with_cli_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F4: main.main() مع --cli ⇒ يستدعي cli_main (بلا تنفيذ حقيقي)."""
+    from app import main as app_main
+
+    recorded: list[list[str]] = []
+
+    def fake_cli_main(argv: list[str]) -> int:
+        recorded.append(list(argv))
+        return 0
+
+    monkeypatch.setattr("app.cli.cli_main", fake_cli_main)
+    monkeypatch.setattr(sys, "argv", ["prog", "--cli", "--path", "X"])
+
+    assert app_main.main() == 0
+    assert recorded and "--cli" in recorded[0]
+
+
+def test_module_entry_point_matches_main(
+    tmp_path: Path,
+) -> None:
+    """F6: `python -m app` (أي __main__.py) يمرّ عبر main.main()."""
+    source = (REPO_ROOT / "app" / "__main__.py").read_text(encoding="utf-8")
+
+    assert "from .main import main" in source
+    assert "raise SystemExit(main())" in source
+
+    # والتحقق الفعلي: نفس التوجيه عبر python -m app
+    result = _run_module("--cli", "--help", data_dir=tmp_path)
+    assert result.returncode == 0
+    assert "--path" in result.stdout
+
+
+def test_cli_main_converts_unexpected_errors_to_exit_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F7: استثناء غير متوقع داخل cli_main ⇒ رمز 1 بلا traceback."""
+    def boom(*args, **kwargs) -> int:  # noqa: ANN002, ANN003
+        raise RuntimeError("فشل غير متوقع")
+
+    monkeypatch.setattr(cli, "run_cli", boom)
+
+    assert cli.cli_main(["--cli"]) == 1
