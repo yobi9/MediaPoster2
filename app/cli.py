@@ -8,7 +8,9 @@ import sys
 from pathlib import Path
 
 from .config import (
+    MAX_JPEG_QUALITY,
     MEDIA_FILTERS,
+    MIN_JPEG_QUALITY,
     AppConfig,
     VERSION,
     load_config,
@@ -20,6 +22,22 @@ from .services.images import ImageService
 from .services.processor import Processor
 from .services.scanner import discover_media
 from .services.tmdb import TMDBClient
+
+
+def _quality_value(text: str) -> int:
+    """قابل لـ--quality: يرفض فوراً أي قيمة خارج النطاق (لا قصّ صامت)."""
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            "جودة الصور يجب أن تكون عدداً صحيحاً بين "
+            f"{MIN_JPEG_QUALITY} و {MAX_JPEG_QUALITY}."
+        ) from None
+    if not (MIN_JPEG_QUALITY <= value <= MAX_JPEG_QUALITY):
+        raise argparse.ArgumentTypeError(
+            f"جودة الصور يجب أن تكون بين {MIN_JPEG_QUALITY} و {MAX_JPEG_QUALITY}."
+        )
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,7 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-p", "--path", help="مجلد المكتبة الجذري.")
     parser.add_argument("-t", "--token", help="مفتاح TMDB v3 أو v4 (يفضل متغير البيئة TMDB_API_KEY).")
     parser.add_argument("--language", help="لغة البيانات والصور، مثل ar أو en.")
-    parser.add_argument("--quality", type=int, help="جودة JPG من 60 إلى 100 (افتراضي 95).")
+    parser.add_argument(
+        "--quality",
+        type=_quality_value,
+        help=f"جودة JPG من {MIN_JPEG_QUALITY} إلى {MAX_JPEG_QUALITY} (افتراضي 95).",
+    )
     parser.add_argument("--media", choices=[key for key, _ in MEDIA_FILTERS], help="نوع الوسائط.")
     parser.add_argument("--limit", type=int, help="معالجة أول N عنصر فقط (للتجربة).")
     parser.add_argument("--overwrite", action="store_true", help="استبدال الصور الموجودة.")

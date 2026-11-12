@@ -33,6 +33,11 @@ SUPPORTED_LANGUAGES: tuple[tuple[str, str], ...] = (
     ("ko", "한국어"),
 )
 
+# حدود جودة JPEG المعتمدة في التطبيق (نفس حدود _clamp_quality في images.py).
+MIN_JPEG_QUALITY = 60
+MAX_JPEG_QUALITY = 100
+DEFAULT_JPEG_QUALITY = 95
+
 MEDIA_FILTERS: tuple[tuple[str, str], ...] = (
     ("all", "الكل (أفلام + مسلسلات)"),
     ("movies", "أفلام فقط"),
@@ -97,7 +102,9 @@ class AppConfig:
         self.tmdb_api_key = (self.tmdb_api_key or "").strip()
         self.library_path = (self.library_path or "").strip()
         self.language = (self.language or "ar").strip() or "ar"
-        self.jpeg_quality = _clamp_int(self.jpeg_quality, 60, 100, 95)
+        self.jpeg_quality = _clamp_int(
+            self.jpeg_quality, MIN_JPEG_QUALITY, MAX_JPEG_QUALITY, DEFAULT_JPEG_QUALITY
+        )
         self.request_timeout = _clamp_int(self.request_timeout, 5, 120, 20)
         self.max_retries = _clamp_int(self.max_retries, 1, 10, 3)
         self.cache_ttl_days = _clamp_int(self.cache_ttl_days, 1, 3650, 30)

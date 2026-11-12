@@ -77,6 +77,47 @@ def run_with(
     return cli.run_cli(args)
 
 
+def run_and_capture_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *extra_args: str,
+) -> tuple[int, AppConfig]:
+    """نفّذ run_cli وأعد رمز الخروج مع كائن الإعدادات بعد معالجته."""
+    library = tmp_path / "Library"
+    library.mkdir(parents=True, exist_ok=True)
+    item_folder = library / "Movie"
+    item_folder.mkdir(parents=True, exist_ok=True)
+
+    captured: dict[str, AppConfig] = {}
+
+    def fake_load_config() -> AppConfig:
+        config = AppConfig(library_path=str(library))
+        captured["config"] = config
+        return config
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr(
+        cli,
+        "discover_media",
+        lambda root, media_filter="all": [
+            MediaItem(path=item_folder, kind=MediaKind.MOVIE, title="عنصر", year=2020)
+        ],
+    )
+    monkeypatch.setattr(cli, "TMDBClient", FakeClient)
+    monkeypatch.setattr(
+        cli, "Processor", lambda config, client=None, images=None: FakeProcessor(
+            make_summary(item_folder, Status.OK)
+        )
+    )
+    monkeypatch.setenv("TMDB_API_KEY", "TESTTOKEN")
+
+    args = cli.build_parser().parse_args(
+        ["--cli", "--path", str(library), *extra_args]
+    )
+    code = cli.run_cli(args)
+    return code, captured["config"]
+
+
 def test_success_returns_zero(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """E1: كل العناصر ناجحة ⇒ رمز 0."""
     assert run_with(monkeypatch, tmp_path, Status.OK, Status.OK) == 0
@@ -140,3 +181,62 @@ def test_flag_is_optional(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     """القيمة الافتراضية للسمة false (توافق خلفي)."""
     args = cli.build_parser().parse_args(["--cli"])
     assert args.fail_on_not_found is False
+
+
+# ---------------------------------------------------------------------------
+# --quality: تحقق فوري (D6)
+# ---------------------------------------------------------------------------
+def test_quality_above_range_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+    """Q1: --quality 500 ⇒ parser.error (خروج 2) مع رسالة عربية واضحة."""
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(["--cli", "--quality", "500"])
+
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "جودة الصور يجب أن تكون بين 60 و 100" in captured.err
+
+
+def test_quality_below_range_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+    """Q2: --quality 0 ⇒ parser.error (خروج 2)."""
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(["--cli", "--quality", "0"])
+
+    assert excinfo.value.code == 2
+    assert "جودة الصور يجب أن تكون بين 60 و 100" in capsys.readouterr().err
+
+
+def test_valid_quality_is_accepted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Q3: --quality 95 ⇒ لا خطأ، والقيمة تصل إلى AppConfig."""
+    code, config = run_and_capture_config(
+        monkeypatch, tmp_path, "--quality", "95"
+    )
+
+    assert code == 0
+    assert config.jpeg_quality == 95
+
+
+def test_quality_upper_bound_is_accepted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Q4: --quality 100 (الحد العلوي) و92 ⇒ لا خطأ."""
+    code, config = run_and_capture_config(
+        monkeypatch, tmp_path, "--quality", "100"
+    )
+    assert code == 0
+    assert config.jpeg_quality == 100
+
+    code, config = run_and_capture_config(monkeypatch, tmp_path, "--quality", "92")
+    assert code == 0
+    assert config.jpeg_quality == 92
+
+
+def test_quality_default_is_95(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Q5: بلا --quality ⇒ القيمة الافتراضية 95."""
+    code, config = run_and_capture_config(monkeypatch, tmp_path)
+
+    assert code == 0
+    assert config.jpeg_quality == 95
