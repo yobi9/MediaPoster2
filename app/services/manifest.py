@@ -30,6 +30,8 @@ class OutputManifest:
     def __init__(self, output_root: Path | str) -> None:
         self.path = Path(output_root) / MANIFEST_NAME
         self._entries: dict[str, dict[str, Any]] = {}
+        #: ملف بإصدار غير معروف لا يُقرأ ولا يُكتب فوقه أبداً.
+        self._readonly = False
         self._load()
 
     # ------------------------------------------------------------------
@@ -45,6 +47,8 @@ class OutputManifest:
         An unchanged entry keeps its original timestamp, so re-running over an
         already-complete tree leaves the manifest byte-identical.
         """
+        if self._readonly:
+            return False
         files = sorted(set(files))
         previous = self._entries.get(key)
         if (
@@ -63,6 +67,8 @@ class OutputManifest:
 
     # ------------------------------------------------------------------
     def flush(self) -> None:
+        if self._readonly:
+            return
         payload = {"version": MANIFEST_VERSION, "entries": self._entries}
         text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
         fd, tmp_name = tempfile.mkstemp(
@@ -94,6 +100,21 @@ class OutputManifest:
             logger.warning("ملف manifest تالف، سيُعاد بناؤه: %s", self.path)
             return
         if not isinstance(data, dict):
+            return
+        version = data.get("version")
+        if version != MANIFEST_VERSION:
+            # Written by another tool or a newer format: reading it would apply
+            # unknown semantics, and the next flush would silently replace the
+            # whole file with our own version.
+            logger.warning(
+                "إصدار manifest غير مدعوم (%s ≠ %s)؛ لن يُقرأ ولن "
+                "يُكتب فوقه: %s. لتفعيل idempotency، احذف الملف أو "
+                "أعد تسميته.",
+                version,
+                MANIFEST_VERSION,
+                self.path,
+            )
+            self._readonly = True
             return
         entries = data.get("entries")
         if isinstance(entries, dict):
