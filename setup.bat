@@ -12,19 +12,28 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [1/3] إنشاء البيئة الافتراضية .venv ...
+echo [1/4] إنشاء البيئة الافتراضية .venv ...
 if not exist ".venv\Scripts\python.exe" (
     python -m venv .venv
     if errorlevel 1 goto :failed
 )
 
-echo [2/3] تحديث pip ...
+echo [2/4] تحديث pip ...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
 if errorlevel 1 goto :failed
 
-echo [3/3] تثبيت المتطلبات ...
+echo [3/4] تثبيت المتطلبات ...
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 goto :failed
+
+echo [4/4] بناء الملفات التنفيذية (اختياري - للتطوير فقط) ...
+".venv\Scripts\python.exe" -m pip show pyinstaller >nul 2>nul
+if errorlevel 1 (
+    echo     تم التخطّي: PyInstaller غير مثبّت (ليس مطلوباً للتشغيل).
+) else (
+    call build.bat
+    if errorlevel 1 goto :failed
+)
 
 echo.
 echo [OK] تم التثبيت بنجاح. شغّل run.bat الآن.

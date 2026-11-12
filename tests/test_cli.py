@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,6 +16,8 @@ import pytest
 from app import cli
 from app.config import AppConfig
 from app.models import ItemResult, MediaItem, MediaKind, RunSummary, Status
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeProcessor:
@@ -284,3 +289,67 @@ def test_refresh_negatives_is_off_by_default(
     run_with(monkeypatch, tmp_path, Status.OK, client_cls=RecordingClient)
 
     assert recorded.get("refresh_negatives") is False
+
+
+# ---------------------------------------------------------------------------
+# نقطة الدخول python -m app (P1 / B1-B4)
+# ---------------------------------------------------------------------------
+def _run_module(*args: str, data_dir: Path | None = None) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    if data_dir is not None:
+        env["MEDIAART_DATA_DIR"] = str(data_dir)
+    return subprocess.run(
+        [sys.executable, "-m", "app", *args],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+
+
+def test_module_help_exits_zero_and_lists_options(tmp_path: Path) -> None:
+    """B1: python -m app --cli --help ⇒ خرج 0 مع ذكر الخيارات."""
+    result = _run_module("--cli", "--help", data_dir=tmp_path)
+
+    assert result.returncode == 0
+    assert "--path" in result.stdout
+    assert "--token" in result.stdout
+
+
+def test_module_help_writes_nothing_to_stderr(tmp_path: Path) -> None:
+    """B2: لا traceback ولا أخطاء على stderr."""
+    result = _run_module("--cli", "--help", data_dir=tmp_path)
+
+    assert result.stderr.strip() == ""
+    assert "Traceback" not in result.stdout
+
+
+def test_module_without_path_fails_with_arabic_message(tmp_path: Path) -> None:
+    """B3: python -m app --cli بلا مسار ⇒ خرج غير صفري برسالة عربية."""
+    result = _run_module("--cli", data_dir=tmp_path)
+
+    assert result.returncode != 0
+    assert "Traceback" not in result.stderr
+    assert "Traceback" not in result.stdout
+    assert "مسار المكتبة" in (result.stderr + result.stdout)
+
+
+def test_main_routes_to_gui_without_cli_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B4: main.main() بلا --cli ⇒ يطلق launch_gui (بلا نافذة فعلية)."""
+    from app import main as app_main
+
+    called: list[bool] = []
+
+    def fake_launch_gui() -> int:
+        called.append(True)
+        return 0
+
+    monkeypatch.setattr(app_main, "launch_gui", fake_launch_gui)
+    monkeypatch.setattr(sys, "argv", ["prog"])
+
+    assert app_main.main() == 0
+    assert called == [True]

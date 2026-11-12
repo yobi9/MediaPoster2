@@ -53,6 +53,27 @@
 
 > لا تنقل التطبيق بعد التثبيت دون إعادة تشغيل `setup.bat` إذا حذفت `.venv`.
 
+### الملفات التنفيذية (اختياري — للتوزيع)
+
+`setup.bat` يبني **نسختين** من نفس المصدر إذا كان `PyInstaller` مثبّتاً:
+
+| الملف | النافذة | الاستخدام |
+|---|---|---|
+| `dist\MediaArtAutoSync.exe` | رسومية (بلا نافذة أوامر) | الاستخدام اليومي على سطح المكتب. |
+| `dist\MediaArtAutoSync-cli.exe` | سطر أوامر (مع مخرجات) | الأتمتة و NAS والمهام المجدولة: |
+
+```bat
+REM بناء النسختين (مرة واحدة)
+.venv\Scripts\python.exe -m pip install pyinstaller
+build.bat
+
+REM usage
+dist\MediaArtAutoSync-cli.exe --cli --path "D:\Media\Library"
+```
+
+> النسخة `cli` هي التي تطبع النتائج ورمز الخروج — النسخة الرسومية لا تُخرج
+> أي نص في الطرفية.
+
 ### الطريقة اليدوية
 
 ```bat

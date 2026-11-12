@@ -20,6 +20,8 @@ htmlcov/
 build/
 dist/
 *.spec
+# ...but the hand-written build spec IS part of the source.
+!MediaArtAutoSync.spec
 
 # Screenshots / scratch
 ui_preview.png
