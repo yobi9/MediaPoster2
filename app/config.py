@@ -7,6 +7,7 @@ JSON next to the log file (``%LOCALAPPDATA%/MediaArtAutoSync`` on Windows).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from dataclasses import asdict, dataclass, fields
@@ -16,6 +17,10 @@ from typing import Any, get_type_hints
 APP_NAME = "MediaArt Auto-Sync"
 APP_SLUG = "MediaArtAutoSync"
 VERSION = "1.0.0"
+
+# Uses the stdlib logger directly: ``logging_setup`` imports this module, so
+# importing it back would create a circular dependency.
+logger = logging.getLogger("mediaart.config")
 
 SUPPORTED_LANGUAGES: tuple[tuple[str, str], ...] = (
     ("ar", "العربية"),
@@ -180,13 +185,38 @@ def save_config(config: AppConfig, path: Path | None = None) -> None:
         tmp.unlink(missing_ok=True)
 
 
-def resolve_token(config: AppConfig) -> str:
-    """Token resolution order: explicit config, then environment variables."""
+def resolve_token(config: AppConfig, cli_token: str | None = None) -> str:
+    """Resolve the TMDB token.
+
+    Order of precedence:
+
+    1. ``cli_token`` — a token passed explicitly on the command line
+       (``--token``) always wins, even over the environment.
+    2. Environment variables (``TMDB_API_KEY``, ``TMDB_READ_ACCESS_TOKEN``,
+       ``TMDB_TOKEN``).
+    3. The key stored in ``config.json`` (``config.tmdb_api_key``).
+    """
+    env_name, env_value = _first_env_token()
+    explicit = (cli_token or "").strip()
+    if explicit:
+        if env_value:
+            logger.warning(
+                "تحذير: --token الممرّر يتعارض مع %s في البيئة؛ أستخدم --token.",
+                env_name,
+            )
+        return explicit
+    if env_value:
+        return env_value
+    return (config.tmdb_api_key or "").strip()
+
+
+def _first_env_token() -> tuple[str, str]:
+    """Return the first environment token as ``(name, value)``."""
     for env_name in ("TMDB_API_KEY", "TMDB_READ_ACCESS_TOKEN", "TMDB_TOKEN"):
         value = os.environ.get(env_name, "").strip()
         if value:
-            return value
-    return (config.tmdb_api_key or "").strip()
+            return env_name, value
+    return "", ""
 
 
 def env_token_present() -> bool:

@@ -48,8 +48,9 @@ def run_cli(args: argparse.Namespace) -> int:
 
     if args.path:
         config.library_path = args.path
-    if args.token:
-        config.tmdb_api_key = args.token
+    cli_token = (args.token or "").strip()
+    if cli_token:
+        config.tmdb_api_key = cli_token
     if args.language:
         config.language = args.language
     if args.quality is not None:
@@ -69,7 +70,7 @@ def run_cli(args: argparse.Namespace) -> int:
         logger.error("مسار المكتبة غير صالح. استخدم --path أو احفظ المسار من الواجهة.")
         return 2
 
-    token = resolve_token(config)
+    token = resolve_token(config, cli_token or None)
     if not config.convert_only and not token:
         logger.error("مفتاح TMDB مطلوب. استخدم --token أو متغير TMDB_API_KEY.")
         return 2
