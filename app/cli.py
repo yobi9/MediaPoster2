@@ -26,6 +26,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mediaart",
         description="MediaArt Auto-Sync — تنزيل الملصقات والخلفيات من TMDB (وضع سطر الأوامر).",
+        epilog=(
+            "أكواد الخروج: 0 = نجاح كامل، 1 = أخطاء أثناء العمل، "
+            "2 = إعداد غير صالح، 3 = عناصر غير موجودة (مع --fail-on-not-found فقط)."
+        ),
     )
     parser.add_argument("--cli", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("-p", "--path", help="مجلد المكتبة الجذري.")
@@ -38,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="بحث فقط بدون تنزيل أو تحويل.")
     parser.add_argument("--convert-only", action="store_true", help="تحويل WebP إلى JPG فقط بدون TMDB.")
     parser.add_argument("--no-cache", action="store_true", help="تعطيل كاش TMDB لهذه الجلسة.")
+    parser.add_argument(
+        "--fail-on-not-found",
+        action="store_true",
+        help="إنهاء التشغيل برمز 3 إذا وُجد عنصر غير موجود في TMDB (الافتراضي: رمز 0).",
+    )
     parser.add_argument("--verbose", action="store_true", help="سجل تفصيلي.")
     parser.add_argument("--version", action="version", version=VERSION)
     return parser
@@ -138,7 +147,11 @@ def run_cli(args: argparse.Namespace) -> int:
                 f"- [{result.status.label_ar}] {result.item.title}"
                 f" ({result.item.kind.label_ar}) — {result.message}"
             )
-    return 1 if summary.errors else 0
+    if summary.errors:
+        return 1
+    if getattr(args, "fail_on_not_found", False) and summary.not_found:
+        return 3
+    return 0
 
 
 def cli_main(argv: list[str] | None = None) -> int:
