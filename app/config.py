@@ -49,6 +49,9 @@ MIN_MAX_WORKERS = 1
 MAX_MAX_WORKERS = 8
 DEFAULT_MAX_WORKERS = 3
 
+# أنواع الصور التي يمكن طلبها/تعطيلها كلٌّ على حدة (A-types).
+IMAGE_TYPES: tuple[str, ...] = ("poster", "fanart", "background")
+
 MEDIA_FILTERS: tuple[tuple[str, str], ...] = (
     ("all", "الكل (أفلام + مسلسلات)"),
     ("movies", "أفلام فقط"),
@@ -96,7 +99,10 @@ class AppConfig:
 
     jpeg_quality: int = 95
     overwrite_images: bool = False
-    create_background_copy: bool = True
+    #: أنواع الصور المستقلة: كل نوع يُنزَّل ويُفحص ويُتخطّى بذاته.
+    download_poster: bool = True
+    download_fanart: bool = False
+    download_background: bool = False
     create_folder_thumbnail: bool = False
 
     convert_existing_webp: bool = True
@@ -168,6 +174,10 @@ class AppConfig:
             self.min_request_interval = 0.35
         if self.media_filter not in {"all", "movies", "series"}:
             self.media_filter = "all"
+        if not (self.download_poster or self.download_fanart or self.download_background):
+            logger.warning(
+                "تحذير: كل أنواع الصور معطّلة — لن يُنزَّل أي ملف صورة."
+            )
 
     # ------------------------------------------------------------------
     def to_dict(self) -> dict[str, Any]:

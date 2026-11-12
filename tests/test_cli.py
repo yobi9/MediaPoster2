@@ -535,6 +535,50 @@ def test_cli_main_converts_unexpected_errors_to_exit_one(
 # ---------------------------------------------------------------------------
 # --output-root (B2/P13)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# --images (A-types)
+# ---------------------------------------------------------------------------
+def test_images_option_maps_to_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CLI1: --images poster,fanart ⇒ poster/fanart فقط."""
+    code, config = run_and_capture_config(
+        monkeypatch, tmp_path, "--images", "poster,fanart"
+    )
+
+    assert code == 0
+    assert (config.download_poster, config.download_fanart, config.download_background) == (
+        True,
+        True,
+        False,
+    )
+
+
+def test_images_option_accepts_empty_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """--images "" ⇒ لا صور إطلاقاً."""
+    code, config = run_and_capture_config(monkeypatch, tmp_path, "--images", "")
+
+    assert code == 0
+    assert (config.download_poster, config.download_fanart, config.download_background) == (
+        False,
+        False,
+        False,
+    )
+
+
+def test_images_option_rejects_unknown_type(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CLI2: --images bogus ⇒ parser.error برسالة عربية."""
+    with pytest.raises(SystemExit) as excinfo:
+        cli.build_parser().parse_args(["--cli", "--images", "bogus"])
+
+    assert excinfo.value.code == 2
+    assert "أنواع الصور" in capsys.readouterr().err
+
+
 def test_output_root_option_reaches_the_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

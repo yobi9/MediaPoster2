@@ -13,6 +13,7 @@ from pathlib import Path
 from .config import (
     BACKDROP_SIZES,
     DEFAULT_MAX_WORKERS,
+    IMAGE_TYPES,
     MAX_JPEG_QUALITY,
     MAX_MAX_WORKERS,
     MEDIA_FILTERS,
@@ -47,6 +48,21 @@ def _quality_value(text: str) -> int:
             f"جودة الصور يجب أن تكون بين {MIN_JPEG_QUALITY} و {MAX_JPEG_QUALITY}."
         )
     return value
+
+
+def _images_value(text: str) -> tuple[str, ...]:
+    """قابل لـ--images: CSV من أنواع الصور، و"" تعني لا صور إطلاقاً."""
+    tokens = [
+        token.strip().lower()
+        for token in (text or "").split(",")
+        if token.strip()
+    ]
+    unknown = [token for token in tokens if token not in IMAGE_TYPES]
+    if unknown:
+        raise argparse.ArgumentTypeError(
+            "أنواع الصور يجب أن تكون من: " + "، ".join(IMAGE_TYPES) + "."
+        )
+    return tuple(dict.fromkeys(tokens))
 
 
 def _max_workers_value(text: str) -> int:
@@ -114,6 +130,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="بحث فقط بدون تنزيل أو تحويل.")
     parser.add_argument("--convert-only", action="store_true", help="تحويل WebP إلى JPG فقط بدون TMDB.")
     parser.add_argument("--no-cache", action="store_true", help="تعطيل كاش TMDB لهذه الجلسة.")
+    parser.add_argument(
+        "--images",
+        type=_images_value,
+        metavar="poster,fanart,background",
+        help=(
+            "أنواع الصور المراد تنزيلها كقائمة CSV (الافتراضي من الإعدادات: "
+            "poster). اتركها فارغة (--images \"\") لتعطيل كل الصور."
+        ),
+    )
     parser.add_argument(
         "--max-workers",
         type=_max_workers_value,
@@ -183,6 +208,11 @@ def run_cli(args: argparse.Namespace) -> int:
     config.use_cache = not args.no_cache
     if args.max_workers is not None:
         config.max_workers = args.max_workers
+    if args.images is not None:
+        selected = set(args.images)
+        config.download_poster = "poster" in selected
+        config.download_fanart = "fanart" in selected
+        config.download_background = "background" in selected
 
     setup_logging(console=True, level=logging.DEBUG if args.verbose else logging.INFO)
     logger = get_logger("cli")

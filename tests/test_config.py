@@ -164,6 +164,74 @@ def test_read_access_token_env_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
+# أنواع الصور المستقلة (A-types)
+# ---------------------------------------------------------------------------
+def test_defaults_download_only_posters() -> None:
+    """الافتراضي الجديد: الملصق فقط (fanart/background اختياريتان)."""
+    config = AppConfig()
+
+    assert config.download_poster is True
+    assert config.download_fanart is False
+    assert config.download_background is False
+
+
+@pytest.mark.parametrize(
+    "poster,fanart,background",
+    [
+        (False, False, False),
+        (False, False, True),
+        (False, True, False),
+        (False, True, True),
+        (True, False, False),
+        (True, False, True),
+        (True, True, False),
+        (True, True, True),
+    ],
+)
+def test_every_image_type_combination_roundtrips(
+    poster: bool, fanart: bool, background: bool
+) -> None:
+    """C000–C111: كل تركيب يُحفظ ويُقرأ دون انحراف."""
+    config = AppConfig(
+        download_poster=poster,
+        download_fanart=fanart,
+        download_background=background,
+    )
+
+    restored = AppConfig.from_dict(config.to_dict())
+
+    assert (
+        config.download_poster,
+        config.download_fanart,
+        config.download_background,
+    ) == (poster, fanart, background)
+    assert (
+        restored.download_poster,
+        restored.download_fanart,
+        restored.download_background,
+    ) == (poster, fanart, background)
+
+
+def test_all_image_types_disabled_warns_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """C000: تعطيل الكل يُسجّل تحذيراً واحداً (لا يمنع التشغيل)."""
+    with caplog.at_level(logging.WARNING, logger="mediaart.config"):
+        AppConfig(
+            download_poster=False,
+            download_fanart=False,
+            download_background=False,
+        )
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "كل أنواع الصور معطّلة" in record.getMessage()
+    ]
+    assert len(messages) == 1
+
+
+# ---------------------------------------------------------------------------
 # حدّ الكاش السلبي (A2 / N5)
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("value", [0, -1, 366, 1000])
