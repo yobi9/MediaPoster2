@@ -272,10 +272,14 @@ class _CountingTMDB(TMDBClient):
         self.results = results
         self.by_query: dict[str, list[dict]] = {}
         self.calls = 0
+        #: Optional payload for /images so a test can assert the enriched paths.
+        self.images_payload: dict | None = None
 
     def _get_json(self, path: str, params: dict) -> dict:
         self.calls += 1
         if path.endswith("/images"):
+            if self.images_payload is not None:
+                return self.images_payload
             return {"posters": [], "backdrops": []}
         language = str(params.get("language") or "")
         if self.by_query:
@@ -428,6 +432,7 @@ def _client_with_artwork(
     language: str = "ar",
     prefer_localized: bool = False,
     with_poster: bool = True,
+    with_backdrop: bool = True,
 ) -> _CountingTMDB:
     client = _CountingTMDB(tmp_path, {"ar": [], "en": []})
     client.language = language
@@ -435,6 +440,8 @@ def _client_with_artwork(
     payload = movie(title="Matrix", original_title="Matrix")
     if not with_poster:
         payload["poster_path"] = None
+    if not with_backdrop:
+        payload["backdrop_path"] = None
     client.by_query = {"Matrix": [payload]}
     return client
 
@@ -457,6 +464,29 @@ def test_enrichment_runs_when_poster_is_missing(tmp_path: Path) -> None:
 
     assert match is not None
     assert client.calls == 2
+
+
+def test_enrichment_runs_when_backdrop_is_missing(tmp_path: Path) -> None:
+    """A3-2b: ملصق موجود + خلفية غائبة ⇒ enrich وتعبئة backdrop_path.
+
+    The skip condition is ``not (poster and backdrop)``, so a missing
+    backdrop alone must still trigger the /images call.
+    """
+    client = _client_with_artwork(tmp_path, with_backdrop=False)
+    client.images_payload = {
+        "posters": [],
+        "backdrops": [{"file_path": "/bd.jpg", "iso_639_1": None}],
+    }
+
+    match = client.find_match(_item("Matrix"))
+
+    assert match is not None
+    assert client.calls == 2
+    assert match.backdrop_path is not None
+    assert "/bd.jpg" in match.backdrop_path
+    # The poster was already in the search response: it must not be refetched.
+    assert match.poster_path is not None
+    assert "/poster.jpg" in match.poster_path
 
 
 def test_localized_artwork_forces_enrichment(tmp_path: Path) -> None:
