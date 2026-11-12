@@ -155,7 +155,9 @@ class Processor:
 
         poster_path = folder / DEFAULT_POSTER_NAME
         has_poster = _is_non_empty_file(poster_path)
-        has_backdrop = any(_is_non_empty_file(folder / name) for name in backdrop_names)
+        # The standard backdrop is fanart.jpg only. background.jpg is an extra
+        # copy written *after* fanart, so it must never stand in for it.
+        has_backdrop = _is_non_empty_file(folder / DEFAULT_BACKDROP_NAME)
         need_poster = cfg.overwrite_images or not has_poster
         need_backdrop = cfg.overwrite_images or not has_backdrop
 
@@ -267,7 +269,7 @@ class Processor:
         self._ensure_folder_thumbnail(folder)
 
         final_poster = _is_non_empty_file(poster_path)
-        final_backdrop = any(_is_non_empty_file(folder / name) for name in backdrop_names)
+        final_backdrop = _is_non_empty_file(folder / DEFAULT_BACKDROP_NAME)
         required_ok = (not need_poster or final_poster) and (not need_backdrop or final_backdrop)
 
         if required_ok:
@@ -341,10 +343,12 @@ class Processor:
         )
 
     def _mirror_backdrops(self, folder: Path, names: list[str]) -> None:
-        existing = [folder / name for name in names if _is_non_empty_file(folder / name)]
-        if not existing:
+        # The source is the standard fanart.jpg only. Mirroring the other
+        # way round (background.jpg -> fanart.jpg) would fake the standard
+        # file and prevent the real download.
+        primary = folder / DEFAULT_BACKDROP_NAME
+        if not _is_non_empty_file(primary):
             return
-        primary = existing[0]
         for name in names:
             target = folder / name
             if target == primary:

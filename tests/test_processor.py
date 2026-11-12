@@ -128,6 +128,67 @@ def test_not_found(tmp_path: Path) -> None:
     processor.close()
 
 
+def test_background_only_does_not_replace_standard_fanart(
+    tmp_path: Path, image_server: str
+) -> None:
+    """T1: background.jpg وحده لا يكفي — يجب تنزيل fanart.jpg القياسي."""
+    item = make_item(tmp_path)
+    Image.new("RGB", (10, 10), (0, 0, 255)).save(item.path / "background.jpg", format="JPEG")
+    client = FakeClient(make_match(image_server))
+    processor = Processor(AppConfig(), client=client, images=ImageService())
+
+    result = processor.process_item(item)
+
+    assert result.status is Status.OK
+    assert result.backdrop_saved
+    assert client.calls == 1
+    # الملف القياسي يجب أن يكون النسخة المنزّلة (120x180 من الخادم)،
+    # لا مجرد نسخة من background.jpg (10x10).
+    with Image.open(item.path / "fanart.jpg") as downloaded:
+        assert downloaded.size == (120, 180)
+    assert "موجودة مسبقاً" not in result.message
+    processor.close()
+
+
+def test_existing_fanart_is_not_downloaded_again(
+    tmp_path: Path, image_server: str
+) -> None:
+    """T2: وجود fanart.jpg يمنع تنزيل الخلفية مجدداً."""
+    item = make_item(tmp_path)
+    Image.new("RGB", (10, 10), (0, 0, 255)).save(item.path / "fanart.jpg", format="JPEG")
+    before = (item.path / "fanart.jpg").read_bytes()
+    client = FakeClient(make_match(image_server))
+    processor = Processor(AppConfig(), client=client, images=ImageService())
+
+    result = processor.process_item(item)
+
+    assert result.backdrop_saved is False
+    assert (item.path / "fanart.jpg").read_bytes() == before
+    with Image.open(item.path / "fanart.jpg") as kept:
+        assert kept.size == (10, 10)
+    processor.close()
+
+
+def test_existing_fanart_and_background_skip_download(
+    tmp_path: Path, image_server: str
+) -> None:
+    """T3: fanart.jpg مع background.jpg — لا تنزيل مكرر للخلفيات."""
+    item = make_item(tmp_path)
+    Image.new("RGB", (10, 10), (0, 0, 255)).save(item.path / "fanart.jpg", format="JPEG")
+    Image.new("RGB", (10, 10), (0, 255, 0)).save(item.path / "background.jpg", format="JPEG")
+    fanart_before = (item.path / "fanart.jpg").read_bytes()
+    background_before = (item.path / "background.jpg").read_bytes()
+    client = FakeClient(make_match(image_server))
+    processor = Processor(AppConfig(), client=client, images=ImageService())
+
+    result = processor.process_item(item)
+
+    assert result.backdrop_saved is False
+    assert (item.path / "fanart.jpg").read_bytes() == fanart_before
+    assert (item.path / "background.jpg").read_bytes() == background_before
+    processor.close()
+
+
 def test_dry_run_does_not_write_files(tmp_path: Path, image_server: str) -> None:
     item = make_item(tmp_path)
     config = AppConfig(dry_run=True)
