@@ -93,7 +93,8 @@ class AppConfig:
 
     convert_existing_webp: bool = True
     convert_nested_webp: bool = False
-    prefer_localized_artwork: bool = True
+    #: جلب صور بلغة المستخدم (يرفع عدد الطلبات بنحو 50%).
+    prefer_localized_artwork: bool = False
     #: أحجام الصور المطلوبة من TMDB ("original" = الدقة الكاملة، وحجمها
     #: يقارب عشرة أضعاف).
     poster_size: str = DEFAULT_POSTER_SIZE

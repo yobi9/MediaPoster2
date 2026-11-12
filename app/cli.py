@@ -87,6 +87,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="حجم الخلفية المطلوبة من TMDB (original = الدقة الكاملة وحجمها أكبر بعشر مرات).",
     )
     parser.add_argument(
+        "--localized-artwork",
+        action="store_true",
+        help="جلب صور باللغة المختارة بدل الافتراضية (يرفع عدد الطلبات بنحو 50%%).",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="سجل تفصيلي.",
@@ -114,6 +119,9 @@ def run_cli(args: argparse.Namespace) -> int:
     if args.backdrop_size:
         config.backdrop_size = args.backdrop_size
     config.overwrite_images = bool(args.overwrite or config.overwrite_images)
+    config.prefer_localized_artwork = bool(
+        args.localized_artwork or config.prefer_localized_artwork
+    )
     config.dry_run = bool(args.dry_run)
     config.convert_only = bool(args.convert_only)
     config.use_cache = not args.no_cache

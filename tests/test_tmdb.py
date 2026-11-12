@@ -274,9 +274,9 @@ class _CountingTMDB(TMDBClient):
         self.calls = 0
 
     def _get_json(self, path: str, params: dict) -> dict:
+        self.calls += 1
         if path.endswith("/images"):
             return {"posters": [], "backdrops": []}
-        self.calls += 1
         language = str(params.get("language") or "")
         if self.by_query:
             return {"results": self.by_query.get(str(params.get("query") or ""), [])}
@@ -417,3 +417,78 @@ def test_match_uses_the_configured_sizes(tmp_path: Path) -> None:
     assert "/w342/" in match.poster_path
     assert match.backdrop_path is not None
     assert "/w1280/" in match.backdrop_path
+
+
+# ----------------------------------------------------------------------
+# تخطّي الـenrich (A3)
+# ----------------------------------------------------------------------
+def _client_with_artwork(
+    tmp_path: Path,
+    *,
+    language: str = "ar",
+    prefer_localized: bool = False,
+    with_poster: bool = True,
+) -> _CountingTMDB:
+    client = _CountingTMDB(tmp_path, {"ar": [], "en": []})
+    client.language = language
+    client.prefer_localized_artwork = prefer_localized
+    payload = movie(title="Matrix", original_title="Matrix")
+    if not with_poster:
+        payload["poster_path"] = None
+    client.by_query = {"Matrix": [payload]}
+    return client
+
+
+def test_enrichment_is_skipped_when_images_are_present(tmp_path: Path) -> None:
+    """A3-1: صور موجودة + الافتراضي ⇒ طلب واحد فقط (بلا enrich)."""
+    client = _client_with_artwork(tmp_path)
+
+    match = client.find_match(_item("Matrix"))
+
+    assert match is not None
+    assert client.calls == 1
+
+
+def test_enrichment_runs_when_poster_is_missing(tmp_path: Path) -> None:
+    """A3-2: غياب الملصق ⇒ enrich (طلبان) حتى مع الافتراضي."""
+    client = _client_with_artwork(tmp_path, with_poster=False)
+
+    match = client.find_match(_item("Matrix"))
+
+    assert match is not None
+    assert client.calls == 2
+
+
+def test_localized_artwork_forces_enrichment(tmp_path: Path) -> None:
+    """A3-3: prefer_localized_artwork=True مع لغة غير إنجليزية ⇒ enrich."""
+    client = _client_with_artwork(tmp_path, prefer_localized=True)
+
+    match = client.find_match(_item("Matrix"))
+
+    assert match is not None
+    assert client.calls == 2
+
+
+def test_localized_artwork_is_noop_for_english(tmp_path: Path) -> None:
+    """A3-4: مع اللغة الإنجليزية لا يوجد enrich حتى مع تفعيل الخيار."""
+    client = _client_with_artwork(tmp_path, language="en", prefer_localized=True)
+
+    match = client.find_match(_item("Matrix"))
+
+    assert match is not None
+    assert client.calls == 1
+
+
+def test_enrichment_saves_requests(tmp_path: Path) -> None:
+    """A3-6: مقارنة مباشرة — بلا enrich طلب واحد، ومعه طلبان."""
+    plain = _client_with_artwork(tmp_path)
+    plain.find_match(_item("Matrix"))
+
+    localized_dir = tmp_path / "second"
+    localized_dir.mkdir()
+    localized = _client_with_artwork(localized_dir, prefer_localized=True)
+    localized.find_match(_item("Matrix"))
+
+    assert plain.calls == 1
+    assert localized.calls == 2
+    assert localized.calls > plain.calls

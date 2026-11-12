@@ -295,6 +295,53 @@ def test_poster_size_option_rejects_unknown_value(
 
 
 # ---------------------------------------------------------------------------
+# --localized-artwork (A3)
+# ---------------------------------------------------------------------------
+def test_localized_artwork_flag_enables_the_option(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A3-5: --localized-artwork ⇒ prefer_localized_artwork = True."""
+    code, config = run_and_capture_config(
+        monkeypatch, tmp_path, "--localized-artwork"
+    )
+
+    assert code == 0
+    assert config.prefer_localized_artwork is True
+
+
+def test_localized_artwork_is_disabled_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """بلا flag ⇒ يبقى False (سلوك أقل طلبات)."""
+    code, config = run_and_capture_config(monkeypatch, tmp_path)
+
+    assert code == 0
+    assert config.prefer_localized_artwork is False
+
+
+def test_localized_artwork_reaches_the_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A3-6 (تكامل): الخيار يصل إلى TMDBClient فيُفعّل Enrich."""
+    recorded: dict[str, object] = {}
+
+    class RecordingClient(FakeClient):
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            recorded.update(kwargs)
+            super().__init__()
+
+    run_with(
+        monkeypatch,
+        tmp_path,
+        Status.OK,
+        extra_args=("--localized-artwork",),
+        client_cls=RecordingClient,
+    )
+
+    assert recorded.get("prefer_localized_artwork") is True
+
+
+# ---------------------------------------------------------------------------
 # --refresh-negatives (A2 / N6)
 # ---------------------------------------------------------------------------
 def test_refresh_negatives_reaches_the_client(
