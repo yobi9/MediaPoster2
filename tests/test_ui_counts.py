@@ -58,4 +58,6 @@ def test_ui_counts_match_table_rows(qapp: QApplication, tmp_path: Path) -> None:
         assert window._counts["skipped"] == 1
         assert window._counts["not_found"] == 1
     finally:
-        window.deleteLater()
+        # close() يفصل QtLogHandler عن المسجّل (closeEvent)؛ deleteLater وحده
+        # يُبقيه مربوطاً فيقتل أي سجل بعد موت النافذة.
+        window.close()

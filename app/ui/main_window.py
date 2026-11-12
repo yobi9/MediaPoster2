@@ -42,6 +42,7 @@ from ..config import (
     MEDIA_FILTERS,
     SUPPORTED_LANGUAGES,
     VERSION,
+    ensure_output_root,
     env_token_present,
     load_config,
     resolve_token,
@@ -208,6 +209,24 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.token_edit, 1, 1)
         grid.addLayout(token_actions, 1, 2)
 
+        output_label = QLabel("مجلد إخراج الصور")
+        output_label.setObjectName("FieldLabel")
+        output_label.setToolTip("اختياري: للمكتبات للقراءة فقط (NAS). اتركه فارغاً للكتابة في المكتبة.")
+        self.output_edit = QLineEdit()
+        self.output_edit.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.output_edit.setPlaceholderText(r"(اختياري) E:\Posters  —  للمكتبات للقراءة فقط")
+        self.output_edit.setClearButtonEnabled(True)
+        self.output_edit.setToolTip(
+            "إذا مُلئ، تُكتب poster/fanart/background في هذا المجلد بنفس المسار النسبي "
+            "من جذر المكتبة، مع ملف .mediaart_manifest.json. المصدر لا يُلمس."
+        )
+        self.output_browse_btn = QPushButton("تصفح…")
+        self.output_browse_btn.setObjectName("Ghost")
+        self.output_browse_btn.clicked.connect(self._browse_output)
+        grid.addWidget(output_label, 2, 0)
+        grid.addWidget(self.output_edit, 2, 1)
+        grid.addWidget(self.output_browse_btn, 2, 2)
+
         options = QGridLayout()
         options.setHorizontalSpacing(12)
         options.setVerticalSpacing(4)
@@ -232,7 +251,7 @@ class MainWindow(QMainWindow):
         options.addWidget(self.lang_combo, 1, 0)
         options.addWidget(self.quality_combo, 1, 1)
         options.addWidget(self.media_combo, 1, 2)
-        grid.addLayout(options, 2, 0, 1, 3)
+        grid.addLayout(options, 3, 0, 1, 3)
 
         chips = QGridLayout()
         chips.setHorizontalSpacing(8)
@@ -275,12 +294,12 @@ class MainWindow(QMainWindow):
         for index, chip in enumerate(chip_list):
             row_index, col_index = divmod(index, 3)
             chips.addWidget(chip, row_index, col_index)
-        grid.addLayout(chips, 3, 0, 1, 3)
+        grid.addLayout(chips, 4, 0, 1, 3)
 
         self.mode_hint = QLabel()
         self.mode_hint.setObjectName("Muted")
         self.mode_hint.setWordWrap(True)
-        grid.addWidget(self.mode_hint, 4, 0, 1, 3)
+        grid.addWidget(self.mode_hint, 5, 0, 1, 3)
 
         self.dry_chip.toggled.connect(self._update_mode_hint)
         self.convert_only_chip.toggled.connect(self._update_mode_hint)
@@ -477,6 +496,7 @@ class MainWindow(QMainWindow):
     def _restore_state(self) -> None:
         cfg = self.config
         self.path_edit.setText(cfg.library_path)
+        self.output_edit.setText(cfg.output_root)
         self.token_edit.setText(cfg.tmdb_api_key)
         if env_token_present() and not cfg.tmdb_api_key:
             self.token_edit.setPlaceholderText("يُستخدم مفتاح من متغير البيئة TMDB_API_KEY")
@@ -507,6 +527,15 @@ class MainWindow(QMainWindow):
     def _sync_config_from_ui(self) -> None:
         cfg = self.config
         cfg.library_path = self.path_edit.text().strip()
+        # An unusable output folder must not be persisted (from_dict would drop
+        # it silently on the next start); _start reports it instead.
+        output_root = self.output_edit.text().strip()
+        if output_root:
+            try:
+                output_root = str(ensure_output_root(output_root))
+            except ValueError:
+                output_root = ""
+        cfg.output_root = output_root
         cfg.tmdb_api_key = self.token_edit.text().strip()
         language = self.lang_combo.currentData()
         if language:
@@ -552,6 +581,16 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "اختر مجلد المكتبة", start)
         if folder:
             self.path_edit.setText(folder)
+
+    def _browse_output(self) -> None:
+        start = (
+            self.output_edit.text().strip()
+            or self.path_edit.text().strip()
+            or str(Path.home())
+        )
+        folder = QFileDialog.getExistingDirectory(self, "اختر مجلد إخراج الصور", start)
+        if folder:
+            self.output_edit.setText(folder)
 
     def _toggle_token(self) -> None:
         if self.show_token_btn.isChecked():
@@ -604,6 +643,17 @@ class MainWindow(QMainWindow):
             return
         self._sync_config_from_ui()
         cfg = self.config
+
+        typed_output = self.output_edit.text().strip()
+        if typed_output:
+            try:
+                cfg.output_root = str(ensure_output_root(typed_output))
+            except ValueError as exc:
+                QMessageBox.warning(self, "مجلد إخراج غير صالح", str(exc))
+                self.output_edit.setFocus()
+                return
+        else:
+            cfg.output_root = ""
 
         root = Path(cfg.library_path).expanduser()
         if not cfg.library_path or not root.is_dir():
@@ -802,6 +852,8 @@ class MainWindow(QMainWindow):
         for widget in (
             self.path_edit,
             self.browse_btn,
+            self.output_edit,
+            self.output_browse_btn,
             self.token_edit,
             self.show_token_btn,
             self.test_btn,

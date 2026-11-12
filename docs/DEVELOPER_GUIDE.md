@@ -495,7 +495,8 @@ raw
 
 ### 11.3 `output_root` و manifest (B2/P13)
 
-عند ضبط `output_root` (من `config.json`، أو `--output-root` في CLI) تنتقل كل الكتابة من
+عند ضبط `output_root` (من حقل «مجلد إخراج الصور» في الواجهة، أو `--output-root` في CLI،
+أو `config.json` مباشرة) تنتقل كل الكتابة من
 مجلد العمل إلى شجرة موازية:
 
 | العنصر | بلا `output_root` | مع `output_root` |
@@ -562,6 +563,9 @@ raw
 - `QSettings("MediaArt", "AutoSync")` يحفظ **فقط** `geometry` و`splitter`، وليس الإعدادات.
 - يُحفظ الإعداد عند بدء التشغيل وعند الإغلاق.
 - `convert_only` يعطّل حقول التوكن واختبار الاتصال.
+- حقل «مجلد إخراج الصور» (`output_edit`) يمرّر `output_root` إلى `AppConfig`: `_sync_config_from_ui`
+  يتحقق عبر `ensure_output_root` ولا يحفظ مساراً غير قابل للكتابة (يصبح `""`)، و`_start`
+  يعرض رسالة الخطأ ويعود قبل بدء التشغيل.
 
 ### 12.3 الخيوط والإشارات
 
