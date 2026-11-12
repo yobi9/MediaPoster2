@@ -17,6 +17,7 @@ from ..errors import CancelledError, ImageError, MediaArtError
 from ..logging_setup import get_logger, log_success
 from ..models import ItemResult, MediaItem, MediaKind, RunSummary, Status
 from .images import ConversionResult, ImageService, convert_webp_in_folder, copy_image, is_folder_writable
+from .manifest import OutputManifest
 from .tmdb import TMDBClient
 
 logger = get_logger("processor")
@@ -40,6 +41,90 @@ class Processor:
             quality=config.jpeg_quality,
             timeout=config.request_timeout,
         )
+        self.output_root = _resolve_output_root(config)
+        self.library_root = _resolve_library_root(config)
+        self.manifest = OutputManifest(self.output_root) if self.output_root else None
+        self._warned_webp_skip = False
+
+    # ------------------------------------------------------------------
+    # output_root helpers (B2/P13)
+    def _rel_path(self, folder: Path) -> str | None:
+        """Path of *folder* relative to the library root, POSIX-style."""
+        if self.library_root is None:
+            return None
+        try:
+            relative = folder.resolve().relative_to(self.library_root.resolve())
+        except (ValueError, OSError):
+            return None
+        text = relative.as_posix()
+        return text if text != "." else ""
+
+    def _manifest_key(self, folder: Path) -> str:
+        relative = self._rel_path(folder)
+        return relative if relative else folder.name
+
+    def _target_dir(self, folder: Path) -> Path:
+        """Where the images of *folder* must be written.
+
+        Without ``output_root`` this is the item folder itself (the historical
+        behaviour). With it, the library-relative path is mirrored inside the
+        output tree, so the source library is never written to.
+        """
+        if self.output_root is None:
+            return folder
+        relative = self._rel_path(folder)
+        if not relative:
+            logger.warning(
+                "'%s' خارج جذر المكتبة؛ سيُكتب داخل المصدر نفسه.", folder
+            )
+            return folder
+        return self.output_root / relative
+
+    def _warn_untracked_files(
+        self,
+        folder: Path,
+        target: Path,
+        has_poster: bool,
+        has_backdrop: bool,
+    ) -> None:
+        """Report images already in the output tree that our manifest lacks."""
+        if self.manifest is None:
+            return
+        key = self._manifest_key(folder)
+        if self.manifest.entry(key) is not None:
+            return
+        for name, present in (
+            (DEFAULT_POSTER_NAME, has_poster),
+            (DEFAULT_BACKDROP_NAME, has_backdrop),
+        ):
+            if present:
+                logger.warning(
+                    "تخطّي: الملف موجود مسبقاً بلا سجل: %s/%s", key, name
+                )
+
+    def _record_manifest(self, item: MediaItem, result: ItemResult) -> None:
+        if self.manifest is None:
+            return
+        if result.status in (Status.PREVIEW, Status.NOT_FOUND, Status.CANCELLED):
+            return
+        target = self._target_dir(item.path)
+        present = [
+            name
+            for name in (
+                DEFAULT_POSTER_NAME,
+                DEFAULT_BACKDROP_NAME,
+                ALTERNATE_BACKDROP_NAME,
+                FOLDER_THUMB_NAME,
+            )
+            if _is_non_empty_file(target / name)
+        ]
+        if result.status is Status.ERROR:
+            status = "error"
+        elif result.status is Status.PARTIAL:
+            status = "partial"
+        else:
+            status = "ok" if present else "partial"
+        self.manifest.update_entry(self._manifest_key(item.path), present, status)
 
     # ------------------------------------------------------------------
     def run(
@@ -83,6 +168,7 @@ class Processor:
                 )
 
             summary.results.append(result)
+            self._record_manifest(item, result)
             summary.webp_converted += result.webp_converted
             summary.webp_would_convert += result.webp_would_convert
             if on_item:
@@ -104,13 +190,21 @@ class Processor:
     def process_item(self, item: MediaItem) -> ItemResult:
         folder = item.path
         cfg = self.config
+        target = self._target_dir(folder)
+        if self.output_root is not None and not cfg.dry_run:
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                message = f"تعذر إنشاء مجلد الإخراج: {target} ({exc})"
+                logger.error("%s: %s", item.title, message)
+                return ItemResult(item=item, status=Status.ERROR, message=message)
 
         # One writability probe per work, before any network traffic: an
         # unwritable target would otherwise waste a full download per image.
-        # (When `output_root` lands in v1.1, the "read-only share" case
-        # disappears because the images are written to a different tree.)
-        if not is_folder_writable(folder):
-            message = f"مجلد الهدف غير قابل للكتابة: {folder}"
+        # With `output_root` the source may be read-only on purpose, so the
+        # probe and every write below use the output tree instead.
+        if not is_folder_writable(target):
+            message = f"مجلد الهدف غير قابل للكتابة: {target}"
             logger.error("%s: %s", item.title, message)
             return ItemResult(
                 item=item,
@@ -122,6 +216,21 @@ class Processor:
         conversion = ConversionResult()
 
         if cfg.convert_existing_webp:
+            if self.output_root is not None:
+                # Converting WebP rewrites files next to the source images, so
+                # it cannot run against a read-only library.
+                if not self._warned_webp_skip:
+                    logger.warning(
+                        "مع output_root: تحويل WebP داخل المصدر معطّل (المصدر للقراءة فقط)."
+                    )
+                    self._warned_webp_skip = True
+                cfg_convert_webp = False
+            else:
+                cfg_convert_webp = True
+        else:
+            cfg_convert_webp = False
+
+        if cfg_convert_webp:
             conversion = convert_webp_in_folder(
                 folder,
                 quality=cfg.jpeg_quality,
@@ -151,18 +260,21 @@ class Processor:
             backdrop_names.append(ALTERNATE_BACKDROP_NAME)
 
         if not cfg.dry_run:
-            self._mirror_backdrops(folder, backdrop_names)
+            self._mirror_backdrops(target, backdrop_names)
 
-        poster_path = folder / DEFAULT_POSTER_NAME
+        poster_path = target / DEFAULT_POSTER_NAME
         has_poster = _is_non_empty_file(poster_path)
         # The standard backdrop is fanart.jpg only. background.jpg is an extra
         # copy written *after* fanart, so it must never stand in for it.
-        has_backdrop = _is_non_empty_file(folder / DEFAULT_BACKDROP_NAME)
+        has_backdrop = _is_non_empty_file(target / DEFAULT_BACKDROP_NAME)
         need_poster = cfg.overwrite_images or not has_poster
         need_backdrop = cfg.overwrite_images or not has_backdrop
 
+        if self.output_root is not None and (has_poster or has_backdrop):
+            self._warn_untracked_files(folder, target, has_poster, has_backdrop)
+
         if not need_poster and not need_backdrop:
-            self._ensure_folder_thumbnail(folder)
+            self._ensure_folder_thumbnail(target)
             message = "الصور القياسية موجودة مسبقاً."
             if cfg.dry_run:
                 if conversion.would_convert:
@@ -236,7 +348,7 @@ class Processor:
             try:
                 written = self.images.save_image(
                     _require_url(match.poster_path),
-                    folder,
+                    target,
                     poster_names,
                     overwrite=cfg.overwrite_images,
                 )
@@ -253,7 +365,7 @@ class Processor:
             try:
                 written = self.images.save_image(
                     _require_url(match.backdrop_path),
-                    folder,
+                    target,
                     backdrop_names,
                     overwrite=cfg.overwrite_images,
                 )
@@ -266,10 +378,10 @@ class Processor:
         elif need_backdrop:
             errors.append("لا يوجد رابط خلفية في TMDB")
 
-        self._ensure_folder_thumbnail(folder)
+        self._ensure_folder_thumbnail(target)
 
         final_poster = _is_non_empty_file(poster_path)
-        final_backdrop = _is_non_empty_file(folder / DEFAULT_BACKDROP_NAME)
+        final_backdrop = _is_non_empty_file(target / DEFAULT_BACKDROP_NAME)
         required_ok = (not need_poster or final_poster) and (not need_backdrop or final_backdrop)
 
         if required_ok:
@@ -377,6 +489,28 @@ class Processor:
                 self.client.close()
         finally:
             self.images.close()
+
+
+def _resolve_output_root(config: AppConfig) -> Path | None:
+    raw = (config.output_root or "").strip()
+    if not raw:
+        return None
+    root = Path(raw).expanduser()
+    library = (config.library_path or "").strip()
+    if library:
+        try:
+            if root.resolve() == Path(library).expanduser().resolve():
+                # Same tree: behave as if the option was never set.
+                logger.info("output_root يطابق مجلد المكتبة؛ سيُتجاهل.")
+                return None
+        except OSError:  # pragma: no cover - unresolvable path on Windows
+            pass
+    return root
+
+
+def _resolve_library_root(config: AppConfig) -> Path | None:
+    library = (config.library_path or "").strip()
+    return Path(library).expanduser() if library else None
 
 
 def _is_non_empty_file(path: Path) -> bool:

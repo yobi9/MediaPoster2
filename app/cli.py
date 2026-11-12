@@ -15,6 +15,7 @@ from .config import (
     POSTER_SIZES,
     AppConfig,
     VERSION,
+    ensure_output_root,
     load_config,
     resolve_token,
 )
@@ -53,6 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--cli", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("-p", "--path", help="مجلد المكتبة الجذري.")
+    parser.add_argument(
+        "--output-root",
+        help=(
+            "مجلد إخراج بديل للصور (للمكتبات للقراءة فقط، مثل مجلدات NAS): "
+            "يُعاد إنشاء المسار النسبي من جذر المكتبة بداخله."
+        ),
+    )
     parser.add_argument("-t", "--token", help="مفتاح TMDB v3 أو v4 (يفضل متغير البيئة TMDB_API_KEY).")
     parser.add_argument("--language", help="لغة البيانات والصور، مثل ar أو en.")
     parser.add_argument(
@@ -129,6 +137,12 @@ def run_cli(args: argparse.Namespace) -> int:
     setup_logging(console=True, level=logging.DEBUG if args.verbose else logging.INFO)
     logger = get_logger("cli")
 
+    if args.output_root:
+        try:
+            config.output_root = str(ensure_output_root(args.output_root))
+        except ValueError as exc:
+            logger.error("%s", exc)
+            return 2
     root = Path(config.library_path).expanduser() if config.library_path else None
     if root is None or not root.is_dir():
         logger.error("مسار المكتبة غير صالح. استخدم --path أو احفظ المسار من الواجهة.")
@@ -141,6 +155,8 @@ def run_cli(args: argparse.Namespace) -> int:
 
     logger.info("MediaArt Auto-Sync v%s", VERSION)
     logger.info("المكتبة: %s", root)
+    if config.output_root:
+        logger.info("مجلد الإخراج: %s", config.output_root)
     logger.info(
         "الوضع: %s | اللغة: %s | النوع: %s",
         "تحويل WebP فقط" if config.convert_only else ("معاينة" if config.dry_run else "تنزيل كامل"),

@@ -530,3 +530,35 @@ def test_cli_main_converts_unexpected_errors_to_exit_one(
     monkeypatch.setattr(cli, "run_cli", boom)
 
     assert cli.cli_main(["--cli"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# --output-root (B2/P13)
+# ---------------------------------------------------------------------------
+def test_output_root_option_reaches_the_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """B2-8: --output-root PATH ⇒ AppConfig.output_root ومجلد قابل للكتابة."""
+    output = tmp_path / "artwork"
+
+    code, config = run_and_capture_config(
+        monkeypatch, tmp_path, "--output-root", str(output)
+    )
+
+    assert code == 0
+    assert Path(config.output_root).name == "artwork"
+    assert output.is_dir()
+
+
+def test_output_root_option_rejects_unwritable_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """B2-9: مسار إخراج غير قابل للإنشاء ⇒ خروج 2 برسالة عربية."""
+    blocker = tmp_path / "blocked"
+    blocker.write_text("ليس مجلداً", encoding="utf-8")
+
+    code, _config = run_and_capture_config(
+        monkeypatch, tmp_path, "--output-root", str(blocker / "artwork")
+    )
+
+    assert code == 2

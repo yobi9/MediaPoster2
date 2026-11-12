@@ -84,6 +84,9 @@ class AppConfig:
 
     tmdb_api_key: str = ""
     library_path: str = ""
+    #: مجلد إخراج بديل للصور (للمكتبات للقراءة فقط، مثل مجلدات NAS):
+    #: يُعاد إنشاء المسار النسبي من جذر المكتبة داخل هذا المجلد.
+    output_root: str = ""
     language: str = "ar"
 
     jpeg_quality: int = 95
@@ -115,6 +118,9 @@ class AppConfig:
     def __post_init__(self) -> None:
         self.tmdb_api_key = (self.tmdb_api_key or "").strip()
         self.library_path = (self.library_path or "").strip()
+        self.output_root = (self.output_root or "").strip()
+        if self.output_root:
+            ensure_output_root(self.output_root)
         self.language = (self.language or "ar").strip() or "ar"
         self.jpeg_quality = _clamp_int(
             self.jpeg_quality, MIN_JPEG_QUALITY, MAX_JPEG_QUALITY, DEFAULT_JPEG_QUALITY
@@ -184,10 +190,37 @@ class AppConfig:
             cleaned.pop("poster_size", None)
         if cleaned.get("backdrop_size") not in BACKDROP_SIZES:
             cleaned.pop("backdrop_size", None)
+        # An offline share must not stop the app from starting: drop the
+        # output_root instead of failing the whole configuration.
+        if cleaned.get("output_root"):
+            try:
+                ensure_output_root(str(cleaned["output_root"]))
+            except ValueError:
+                cleaned.pop("output_root", None)
         return cls(**cleaned)
 
     def save(self, path: Path | None = None) -> None:
         save_config(self, path or CONFIG_PATH)
+
+
+def ensure_output_root(value: str) -> Path:
+    """Return the usable output folder, or raise ``ValueError`` (Arabic).
+
+    Creating and probing a file is the only trustworthy test on Windows (see
+    ``images.is_folder_writable``); the probe lives here so ``config`` stays
+    free of a circular import on ``images``.
+    """
+    path = Path(value).expanduser()
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        fd, probe_name = tempfile.mkstemp(prefix=".mediaart-probe-", dir=str(path))
+        os.close(fd)
+        os.unlink(probe_name)
+    except OSError as exc:
+        raise ValueError(
+            f"output_root غير قابل للكتابة: {path} ({exc.strerror or exc})"
+        ) from exc
+    return path
 
 
 def _clamp_int(value: Any, low: int, high: int, default: int) -> int:

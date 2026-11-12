@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -409,3 +410,186 @@ def test_permission_error_is_not_retried(
     assert result.status is Status.ERROR
     assert "تعذر حفظ الصورة" in result.message
     processor.close()
+
+
+# ----------------------------------------------------------------------
+# output_root — المكتبات للقراءة فقط (B2/P13)
+# ----------------------------------------------------------------------
+def _output_config(library: Path, output: Path | None, **overrides) -> AppConfig:
+    return AppConfig(
+        library_path=str(library),
+        output_root=str(output) if output is not None else "",
+        **overrides,
+    )
+
+
+def _manifest_path(output: Path) -> Path:
+    return output / ".mediaart_manifest.json"
+
+
+def test_output_root_mirrors_library_relative_path(
+    tmp_path: Path, image_server: str
+) -> None:
+    """B2-1: الصور تُكتب في output_root/<المسار النسبي>، والمصدر يبقى سليماً."""
+    item = make_item(tmp_path)
+    output = tmp_path / "out"
+    config = _output_config(tmp_path, output, create_background_copy=True)
+    processor = Processor(
+        config, client=FakeClient(make_match(image_server)), images=ImageService(quality=95)
+    )
+
+    summary = processor.run([item])
+
+    target = output / item.path.name
+    assert summary.ok == 1
+    assert (target / "poster.jpg").is_file()
+    assert (target / "fanart.jpg").is_file()
+    assert (target / "background.jpg").is_file()
+    # Source untouched: no image was written next to the media files.
+    assert not (item.path / "poster.jpg").exists()
+    assert not (item.path / "fanart.jpg").exists()
+    processor.close()
+
+
+def test_output_root_succeeds_with_read_only_source(
+    tmp_path: Path, image_server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B2-2: مصدر للقراءة فقط + output_root قابل للكتابة ⇒ نجاح لا ERROR."""
+    item = make_item(tmp_path)
+    output = tmp_path / "out"
+    source = item.path.resolve()
+
+    def writable_only_outside_source(folder: object) -> bool:
+        return Path(folder).resolve() != source
+
+    monkeypatch.setattr(
+        "app.services.processor.is_folder_writable", writable_only_outside_source
+    )
+    config = _output_config(tmp_path, output)
+    processor = Processor(
+        config, client=FakeClient(make_match(image_server)), images=ImageService(quality=95)
+    )
+
+    result = processor.process_item(item)
+
+    assert result.status is Status.OK
+    assert (output / item.path.name / "poster.jpg").is_file()
+    processor.close()
+
+
+def test_output_root_second_run_is_idempotent(
+    tmp_path: Path, image_server: str
+) -> None:
+    """B2-3: تشغيل ثانٍ لا يعيد الكتابة ولا يغيّر manifest."""
+    item = make_item(tmp_path)
+    output = tmp_path / "out"
+
+    first = Processor(
+        _output_config(tmp_path, output),
+        client=FakeClient(make_match(image_server)),
+        images=ImageService(quality=95),
+    )
+    first.run([item])
+    first.close()
+    before = _manifest_path(output).read_text(encoding="utf-8")
+    poster_mtime = (output / item.path.name / "poster.jpg").stat().st_mtime_ns
+
+    second_client = FakeClient(make_match(image_server))
+    second = Processor(
+        _output_config(tmp_path, output),
+        client=second_client,
+        images=ImageService(quality=95),
+    )
+    summary = second.run([item])
+    second.close()
+
+    assert second_client.calls == 0
+    assert summary.skipped == 1
+    assert (output / item.path.name / "poster.jpg").stat().st_mtime_ns == poster_mtime
+    assert _manifest_path(output).read_text(encoding="utf-8") == before
+
+
+def test_output_root_warns_about_untracked_files(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """B2-4: ملفات موجودة في output_root بلا سجل ⇒ تخطٍّ مع تحذير."""
+    item = make_item(tmp_path)
+    output = tmp_path / "out"
+    target = output / item.path.name
+    target.mkdir(parents=True)
+    Image.new("RGB", (10, 10)).save(target / "poster.jpg", format="JPEG")
+    Image.new("RGB", (10, 10)).save(target / "fanart.jpg", format="JPEG")
+    client = FakeClient(None)
+    processor = Processor(
+        _output_config(tmp_path, output), client=client, images=ImageService()
+    )
+
+    with caplog.at_level(logging.WARNING, logger="mediaart.processor"):
+        result = processor.process_item(item)
+
+    assert result.status is Status.SKIPPED
+    assert client.calls == 0
+    assert "بلا سجل" in caplog.text
+    processor.close()
+
+
+def test_output_root_writes_manifest_structure(
+    tmp_path: Path, image_server: str
+) -> None:
+    """B2-5: بنية manifest صحيحة بعد النجاح (version/entries/files/ts/status)."""
+    item = make_item(tmp_path)
+    output = tmp_path / "out"
+    processor = Processor(
+        _output_config(tmp_path, output),
+        client=FakeClient(make_match(image_server)),
+        images=ImageService(quality=95),
+    )
+
+    processor.run([item])
+    processor.close()
+
+    payload = json.loads(_manifest_path(output).read_text(encoding="utf-8"))
+    assert payload["version"] == 1
+    entry = payload["entries"][item.path.name]
+    assert entry["status"] == "ok"
+    assert "poster.jpg" in entry["files"]
+    assert "fanart.jpg" in entry["files"]
+    # ISO-8601 timestamp
+    assert "T" in entry["ts"]
+
+
+def test_without_output_root_behaves_as_before(
+    tmp_path: Path, image_server: str
+) -> None:
+    """B2-6: بلا output_root ⇒ لا manifest والكتابة في المصدر (تراجعي)."""
+    item = make_item(tmp_path)
+    processor = Processor(
+        AppConfig(), client=FakeClient(make_match(image_server)), images=ImageService(quality=95)
+    )
+
+    result = processor.process_item(item)
+    processor.close()
+
+    assert result.status is Status.OK
+    assert (item.path / "poster.jpg").is_file()
+    assert list(tmp_path.glob("**/.mediaart_manifest.json")) == []
+
+
+def test_output_root_equal_to_library_is_ignored(
+    tmp_path: Path, image_server: str
+) -> None:
+    """B2-7: output_root == library_path ⇒ سلوك as-if-None (لا manifest)."""
+    item = make_item(tmp_path)
+    processor = Processor(
+        _output_config(tmp_path, tmp_path),
+        client=FakeClient(make_match(image_server)),
+        images=ImageService(quality=95),
+    )
+
+    result = processor.process_item(item)
+    processor.close()
+
+    assert processor.manifest is None
+    assert result.status is Status.OK
+    assert (item.path / "poster.jpg").is_file()
+    assert list(tmp_path.glob("**/.mediaart_manifest.json")) == []
