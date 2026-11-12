@@ -450,6 +450,8 @@ MediaPoster/
 
 - P6 (QtLogHandler NOTSET + بلا RedactionFilter) كان أخطر مما وُصف: كل DEBUG يمرّ، ولا تنقيح للأسرار. أُغلق في 0.3. للمراجعة الأمنية المستقبلية: أي handler جديد يجب أن يمرّ عبر RedactionFilter.
 - C1 (المراجعة البشرية) يتطلب ترقية رسائل درجة المطابقة من DEBUG إلى INFO منظّم — وإلا لن تظهر في الواجهة بعد 0.3.
+- دَين تقني: JsonCache لا يوفّر delete()، لذا الكاش السلبي يكتب reason='resolved' بدل الحذف. المدخلات المحايدة تبقى حتى TTL. الحل: إضافة delete() في الموجة 3 + إزالة resolved.
+- دَين تقني: التوجيه بين الواجهة وCLI في app/main.py يعتمد فحص sys.argv مباشرة ("--cli" in args) — عدا `python -m app --path X` بلا --cli فيفتح الواجهة ويتجاهل خيارات الـCLI. الحل: pytest + argparse.parse_known_args في الموجة 3.
 
 ---
 
