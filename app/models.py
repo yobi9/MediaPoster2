@@ -118,6 +118,7 @@ class ItemResult:
     backdrop_saved: bool = False
     webp_converted: int = 0
     dry_run: bool = False
+    target_writable: bool = True
 
     @property
     def is_success(self) -> bool:

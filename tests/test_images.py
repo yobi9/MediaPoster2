@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from app.services.images import (
     convert_to_jpeg,
     convert_webp_file,
     convert_webp_in_folder,
+    is_folder_writable,
 )
 
 
@@ -64,3 +66,23 @@ def test_convert_to_jpeg_accepts_png(tmp_path: Path) -> None:
     assert target.is_file()
     with Image.open(target) as image:
         assert image.mode == "RGB"
+
+
+def test_writable_folder_is_detected(tmp_path: Path) -> None:
+    assert is_folder_writable(tmp_path) is True
+    # the probe file must not survive the check
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_missing_folder_is_not_writable(tmp_path: Path) -> None:
+    assert is_folder_writable(tmp_path / "does-not-exist") is False
+
+
+def test_unwritable_folder_is_detected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A folder that refuses new files must be reported as unwritable."""
+
+    def deny(*args: object, **kwargs: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", deny)
+    assert is_folder_writable(tmp_path) is False

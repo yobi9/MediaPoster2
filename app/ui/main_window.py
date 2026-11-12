@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -24,6 +25,8 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -67,7 +70,7 @@ class MainWindow(QMainWindow):
         self._counts = {"succeeded": 0, "skipped": 0, "not_found": 0, "errors": 0}
         self._last_summary: RunSummary | None = None
 
-        self.setWindowTitle(f"{APP_NAME} — {VERSION}")
+        self.setWindowTitle(APP_NAME)
         self.setWindowIcon(make_app_icon())
         self.setMinimumSize(1000, 740)
         self.resize(1220, 900)
@@ -88,9 +91,16 @@ class MainWindow(QMainWindow):
     # UI construction
     # ==================================================================
     def _build_ui(self) -> None:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setCentralWidget(scroll)
+
         root = QWidget()
         root.setObjectName("Root")
-        self.setCentralWidget(root)
+        scroll.setWidget(root)
 
         outer = QVBoxLayout(root)
         outer.setContentsMargins(22, 18, 22, 12)
@@ -103,8 +113,10 @@ class MainWindow(QMainWindow):
         self.splitter.setChildrenCollapsible(False)
         self.splitter.addWidget(self._build_console_card())
         self.splitter.addWidget(self._build_results_card())
-        self.splitter.setStretchFactor(0, 2)
-        self.splitter.setStretchFactor(1, 3)
+        # متوازن: لا يفضّل السجل ولا النتائج، مع قابلية السحب للحاجة
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([260, 300])
         outer.addWidget(self.splitter, 1)
         outer.addLayout(self._build_footer())
 
@@ -131,11 +143,12 @@ class MainWindow(QMainWindow):
 
         badge = QLabel(f"TMDB API  •  v{VERSION}")
         badge.setObjectName("Badge")
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         row.addWidget(logo)
         row.addLayout(titles)
-        row.addStretch(1)
         row.addWidget(badge)
+        row.addStretch(1)
         return row
 
     def _build_settings_card(self) -> QFrame:
@@ -153,13 +166,16 @@ class MainWindow(QMainWindow):
         grid = QGridLayout()
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(9)
+        grid.setColumnStretch(0, 0)
         grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 0)
 
-        path_label = QLabel("مجلد المكتبة")
+        path_label = QLabel("مجلد المكتبة *")
         path_label.setObjectName("FieldLabel")
+        path_label.setToolTip("حقل مطلوب في جميع الأوضاع.")
         self.path_edit = QLineEdit()
         self.path_edit.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-        self.path_edit.setPlaceholderText(r"مثال: D:\Media\Library أو \\NAS\Media")
+        self.path_edit.setPlaceholderText(r"D:\Media\Library  or  \\NAS\Media")
         self.path_edit.setClearButtonEnabled(True)
         self.path_edit.setToolTip("يمكنك أيضاً سحب مجلد وإفلاته داخل النافذة.")
         self.browse_btn = QPushButton("تصفح…")
@@ -171,10 +187,11 @@ class MainWindow(QMainWindow):
 
         token_label = QLabel("مفتاح TMDB")
         token_label.setObjectName("FieldLabel")
+        token_label.setToolTip("مطلوب ما لم يكن وضع «تحويل WebP فقط» مفعّلاً.")
         self.token_edit = QLineEdit()
         self.token_edit.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.token_edit.setPlaceholderText("ألصق API Key (v3) أو Read Access Token (v4)")
+        self.token_edit.setPlaceholderText("API Key (v3) or Read Access Token (v4)")
         self.token_edit.setClearButtonEnabled(True)
         self.show_token_btn = QPushButton("إظهار")
         self.show_token_btn.setObjectName("Ghost")
@@ -191,30 +208,38 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.token_edit, 1, 1)
         grid.addLayout(token_actions, 1, 2)
 
-        options = QHBoxLayout()
-        options.setSpacing(8)
+        options = QGridLayout()
+        options.setHorizontalSpacing(12)
+        options.setVerticalSpacing(4)
+        options.setColumnStretch(0, 1)
+        options.setColumnStretch(1, 1)
+        options.setColumnStretch(2, 1)
         self.lang_combo = QComboBox()
         for code, name in SUPPORTED_LANGUAGES:
             self.lang_combo.addItem(f"{name}", code)
+        self.lang_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.quality_combo = QComboBox()
         for value in sorted({80, 85, 90, 95, 100, self.config.jpeg_quality}):
             self.quality_combo.addItem(f"{value}%", value)
+        self.quality_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.media_combo = QComboBox()
         for key, label in MEDIA_FILTERS:
             self.media_combo.addItem(label, key)
-        options.addWidget(self._field_label("اللغة"))
-        options.addWidget(self.lang_combo)
-        options.addSpacing(6)
-        options.addWidget(self._field_label("جودة JPG"))
-        options.addWidget(self.quality_combo)
-        options.addSpacing(6)
-        options.addWidget(self._field_label("نوع الوسائط"))
-        options.addWidget(self.media_combo)
-        options.addStretch(1)
+        self.media_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        options.addWidget(self._field_label("اللغة"), 0, 0)
+        options.addWidget(self._field_label("جودة JPG"), 0, 1)
+        options.addWidget(self._field_label("نوع الوسائط"), 0, 2)
+        options.addWidget(self.lang_combo, 1, 0)
+        options.addWidget(self.quality_combo, 1, 1)
+        options.addWidget(self.media_combo, 1, 2)
         grid.addLayout(options, 2, 0, 1, 3)
 
-        chips = QHBoxLayout()
-        chips.setSpacing(8)
+        chips = QGridLayout()
+        chips.setHorizontalSpacing(8)
+        chips.setVerticalSpacing(8)
+        chips.setColumnStretch(0, 1)
+        chips.setColumnStretch(1, 1)
+        chips.setColumnStretch(2, 1)
         self.overwrite_chip = self._chip(
             "استبدال الصور الموجودة",
             "إعادة تنزيل الملصق والخلفية حتى لو كانا موجودين.",
@@ -239,16 +264,17 @@ class MainWindow(QMainWindow):
             "تحويل WebP فقط",
             "وضع بدون إنترنت: تحويل الصور الموجودة فقط، دون الاتصال بـ TMDB.",
         )
-        for chip in (
+        chip_list = (
             self.overwrite_chip,
             self.background_chip,
             self.convert_chip,
             self.nested_chip,
             self.dry_chip,
             self.convert_only_chip,
-        ):
-            chips.addWidget(chip)
-        chips.addStretch(1)
+        )
+        for index, chip in enumerate(chip_list):
+            row_index, col_index = divmod(index, 3)
+            chips.addWidget(chip, row_index, col_index)
         grid.addLayout(chips, 3, 0, 1, 3)
 
         self.mode_hint = QLabel()
@@ -270,18 +296,19 @@ class MainWindow(QMainWindow):
         top.addWidget(self._card_title("التقدم والنتائج"))
         self.elapsed_label = QLabel("00:00")
         self.elapsed_label.setObjectName("Muted")
+        self.elapsed_label.setToolTip("الوقت المنقضي")
         top.addWidget(self.elapsed_label)
-        top.addStretch(1)
-        self.stop_btn = QPushButton("إيقاف")
-        self.stop_btn.setObjectName("Danger")
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.clicked.connect(self._stop)
         self.start_btn = QPushButton("بدء المعالجة")
         self.start_btn.setObjectName("Primary")
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.start_btn.clicked.connect(self._start)
-        top.addWidget(self.stop_btn)
         top.addWidget(self.start_btn)
+        self.stop_btn = QPushButton("إيقاف")
+        self.stop_btn.setObjectName("Danger")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self._stop)
+        top.addWidget(self.stop_btn)
+        top.addStretch(1)
         layout.addLayout(top)
 
         stats = QHBoxLayout()
@@ -308,6 +335,7 @@ class MainWindow(QMainWindow):
 
     def _build_console_card(self) -> QFrame:
         card, layout = self._new_card()
+        card.setMinimumHeight(150)
         layout.setSpacing(8)
 
         head = QHBoxLayout()
@@ -315,9 +343,11 @@ class MainWindow(QMainWindow):
         head.addStretch(1)
         clear_btn = QPushButton("مسح")
         clear_btn.setObjectName("Ghost")
+        clear_btn.setMinimumHeight(32)
         clear_btn.clicked.connect(self._clear_console)
         open_logs = QPushButton("فتح مجلد السجلات")
         open_logs.setObjectName("Ghost")
+        open_logs.setMinimumHeight(32)
         open_logs.clicked.connect(self._open_data_dir)
         head.addWidget(clear_btn)
         head.addWidget(open_logs)
@@ -335,6 +365,7 @@ class MainWindow(QMainWindow):
 
     def _build_results_card(self) -> QFrame:
         card, layout = self._new_card()
+        card.setMinimumHeight(180)
         layout.setSpacing(8)
 
         head = QHBoxLayout()
@@ -369,10 +400,12 @@ class MainWindow(QMainWindow):
     def _build_footer(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setSpacing(8)
-        self.storage_label = QLabel(f"السجلات والإعدادات: {DATA_DIR}")
+        # عزل اتجاه المسار (LTR) داخل نص RTL حتى لا ينعكس بالخطأ
+        self.storage_label = QLabel(f"السجلات والإعدادات: \u2066{DATA_DIR}\u2069")
         self.storage_label.setObjectName("Muted")
         self.storage_label.setToolTip(str(LOG_PATH))
         self.storage_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.storage_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         row.addWidget(self.storage_label)
         row.addStretch(1)
         readme_btn = QPushButton("دليل الاستخدام")
@@ -409,6 +442,8 @@ class MainWindow(QMainWindow):
         button.setObjectName("Chip")
         button.setCheckable(True)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        button.setMinimumHeight(34)
         if tooltip:
             button.setToolTip(tooltip)
         return button
@@ -618,7 +653,10 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl(TMDB_KEYS_URL))
 
     def _open_readme(self) -> None:
-        readme = Path(__file__).resolve().parents[2] / "README.md"
+        # In a PyInstaller one-file build the sources live in a temporary
+        # folder (sys._MEIPASS); the README is bundled next to them.
+        base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+        readme = base / "README.md"
         if readme.is_file():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(readme)))
         else:

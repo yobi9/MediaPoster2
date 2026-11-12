@@ -16,7 +16,7 @@ from ..config import (
 from ..errors import CancelledError, ImageError, MediaArtError
 from ..logging_setup import get_logger, log_success
 from ..models import ItemResult, MediaItem, MediaKind, RunSummary, Status
-from .images import ConversionResult, ImageService, convert_webp_in_folder, copy_image
+from .images import ConversionResult, ImageService, convert_webp_in_folder, copy_image, is_folder_writable
 from .tmdb import TMDBClient
 
 logger = get_logger("processor")
@@ -103,6 +103,21 @@ class Processor:
     def process_item(self, item: MediaItem) -> ItemResult:
         folder = item.path
         cfg = self.config
+
+        # One writability probe per work, before any network traffic: an
+        # unwritable target would otherwise waste a full download per image.
+        # (When `output_root` lands in v1.1, the "read-only share" case
+        # disappears because the images are written to a different tree.)
+        if not is_folder_writable(folder):
+            message = f"مجلد الهدف غير قابل للكتابة: {folder}"
+            logger.error("%s: %s", item.title, message)
+            return ItemResult(
+                item=item,
+                status=Status.ERROR,
+                message=message,
+                target_writable=False,
+            )
+
         conversion = ConversionResult()
 
         if cfg.convert_existing_webp:

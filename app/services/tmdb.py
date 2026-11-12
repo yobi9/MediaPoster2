@@ -34,6 +34,8 @@ USER_AGENT = "MediaArtAutoSync/1.0 (+https://www.themoviedb.org/)"
 MIN_ACCEPT_SCORE = 55.0
 # Cross-type fallback (movie <-> tv) must be a very strong match.
 CROSS_TYPE_MIN_SCORE = 80.0
+# Second language tried when the user's language returns no acceptable match.
+FALLBACK_LANGUAGE = "en"
 
 logger = get_logger("tmdb")
 
@@ -123,36 +125,31 @@ class TMDBClient:
             return TMDBMatch.from_cache(cached)
 
         primary = item.kind.tmdb_type
-        scored = self._search_scored(primary, title, item.year)
-        if not scored and item.year:
-            scored = self._search_scored(primary, title, None)
+        best = self._best_candidate(primary, title, item.year)
 
-        best = scored[0] if scored and scored[0][0] >= MIN_ACCEPT_SCORE else None
-
-        if best is None and self.cross_type_fallback:
+        if (best is None or best[0] < MIN_ACCEPT_SCORE) and self.cross_type_fallback:
             alternate = "tv" if primary == "movie" else "movie"
-            alt_scored = self._search_scored(alternate, title, item.year)
-            if not alt_scored and item.year:
-                alt_scored = self._search_scored(alternate, title, None)
-            if alt_scored and alt_scored[0][0] >= CROSS_TYPE_MIN_SCORE:
-                best = alt_scored[0]
+            alt = self._best_candidate(alternate, title, item.year)
+            if alt and alt[0] >= CROSS_TYPE_MIN_SCORE and (best is None or alt[0] > best[0]):
+                best = alt
                 logger.warning(
                     "تم العثور على '%s' كنوع مختلف (%s)؛ تحقق من التصنيف.",
-                    best[1].title,
+                    alt[1].title,
                     "مسلسل" if alternate == "tv" else "فيلم",
                 )
 
-        if best is None:
+        if best is None or best[0] < MIN_ACCEPT_SCORE:
             return None
 
-        match = best[1]
+        score, match, language_used = best
         self._enrich_images(match)
         self.cache.set(cache_key, match.to_cache())
         logger.debug(
-            "تم اختيار '%s' (%s) بدرجة %.1f",
+            "تم اختيار '%s' (%s) بدرجة %.1f [لغة البحث: %s]",
             match.title,
             match.year or "?",
-            best[0],
+            score,
+            language_used,
         )
         return match
 
@@ -241,8 +238,58 @@ class TMDBClient:
     # ------------------------------------------------------------------
     # Search & scoring
     # ------------------------------------------------------------------
-    def _search_scored(self, media_type: str, title: str, year: int | None) -> list[tuple[float, TMDBMatch]]:
-        results = self._search(media_type, title, year)
+    def _search_languages(self) -> tuple[str, ...]:
+        """Languages to try, in order: the user's language, then English.
+
+        TMDB's ``/search`` endpoint matches the query against the *displayed*
+        titles, so an English folder name returns nothing when ``language`` is
+        a language that has no translation for that title (recent Asian films
+        with ``language=ar``, for example). Retrying in English afterwards
+        recovers those catalogue entries, while titles that only exist in the
+        user's language still match on the first attempt.
+        """
+        if self.language == FALLBACK_LANGUAGE:
+            return (self.language,)
+        return (self.language, FALLBACK_LANGUAGE)
+
+    def _best_candidate(
+        self, media_type: str, title: str, year: int | None
+    ) -> tuple[float, TMDBMatch, str] | None:
+        """Return ``(score, match, language)`` for the best candidate found.
+
+        The user's language is searched first; English is only tried when that
+        search produced nothing acceptable. The returned language is the one
+        that actually produced the candidate.
+        """
+        weakest: tuple[float, TMDBMatch, str] | None = None
+        for language in self._search_languages():
+            scored = self._search_scored(media_type, title, year, language)
+            if not scored and year:
+                scored = self._search_scored(media_type, title, None, language)
+            if not scored:
+                continue
+            score, match = scored[0]
+            if score >= MIN_ACCEPT_SCORE:
+                if language != self.language:
+                    logger.debug(
+                        "تعذر البحث بلغة '%s' لـ '%s'؛ نجح البديل بـ '%s'.",
+                        self.language,
+                        title,
+                        language,
+                    )
+                return score, match, language
+            if weakest is None or score > weakest[0]:
+                weakest = (score, match, language)
+        return weakest
+
+    def _search_scored(
+        self,
+        media_type: str,
+        title: str,
+        year: int | None,
+        language: str | None = None,
+    ) -> list[tuple[float, TMDBMatch]]:
+        results = self._search(media_type, title, year, language)
         query_norm = normalize_for_match(title)
         scored: list[tuple[float, TMDBMatch]] = []
         for result in results:
@@ -252,10 +299,16 @@ class TMDBClient:
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return scored
 
-    def _search(self, media_type: str, title: str, year: int | None) -> list[dict]:
+    def _search(
+        self,
+        media_type: str,
+        title: str,
+        year: int | None,
+        language: str | None = None,
+    ) -> list[dict]:
         params: dict[str, object] = {
             "query": title,
-            "language": self.language,
+            "language": language or self.language,
             "include_adult": "false",
             "page": 1,
         }

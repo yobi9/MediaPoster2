@@ -55,6 +55,29 @@ def _clamp_quality(quality: int) -> int:
 # ----------------------------------------------------------------------
 # Conversion helpers (no network)
 # ----------------------------------------------------------------------
+def is_folder_writable(folder: Path | str) -> bool:
+    """Return True when a new file can actually be created inside *folder*.
+
+    ``os.access(folder, os.W_OK)`` is **not** reliable on Windows: it reports
+    True for folders the current user is denied write access to (denied ACLs
+    and read-only SMB shares). Creating and removing a temporary probe file is
+    the only trustworthy test, and it is cheap compared to a failed download.
+    """
+    path = Path(folder)
+    probe = path / f".{uuid.uuid4().hex}.writetest.tmp"
+    try:
+        with open(probe, "wb"):
+            pass
+    except OSError:
+        return False
+    finally:
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError as exc:  # pragma: no cover - rare cleanup failure
+            logger.warning("تعذر حذف ملف الفحص المؤقت %s: %s", probe.name, exc)
+    return True
+
+
 def convert_to_jpeg(src: Path | str, dest: Path | str, quality: int = 95) -> Path:
     """Convert any Pillow-readable image to an RGB JPEG atomically."""
     source = Path(src)
@@ -286,12 +309,20 @@ class ImageService:
                     return
                 except CancelledError:
                     raise
-                except (requests.RequestException, ImageError, OSError) as exc:
+                except requests.RequestException as exc:
+                    # Network / timeout problems are the only transient ones.
                     last_error = str(exc)
                     tmp.unlink(missing_ok=True)
                     if attempt < 2:
                         logger.warning("إعادة محاولة تنزيل الصورة (%s)...", exc)
                         continue
+                except OSError as exc:
+                    # Local write failures (permissions, disk) never recover
+                    # on their own: fail fast instead of downloading again.
+                    raise ImageError(f"تعذر حفظ الصورة في {dest}: {exc}") from exc
+                except ImageError:
+                    # Bad content type / oversized image: not transient.
+                    raise
             raise ImageError(last_error)
         finally:
             tmp.unlink(missing_ok=True)

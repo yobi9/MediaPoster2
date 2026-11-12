@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -150,4 +151,58 @@ def test_partial_when_poster_fails(tmp_path: Path, image_server: str) -> None:
     assert result.status is Status.PARTIAL
     assert not (item.path / "poster.jpg").exists()
     assert (item.path / "fanart.jpg").is_file()
+    processor.close()
+
+
+def test_unwritable_target_fails_before_any_network_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unwritable work folder must not trigger a single download."""
+    item = make_item(tmp_path)
+    client = FakeClient(None)
+    monkeypatch.setattr(
+        "app.services.processor.is_folder_writable", lambda folder: False
+    )
+    processor = Processor(AppConfig(), client=client, images=ImageService())
+
+    result = processor.process_item(item)
+
+    assert result.status is Status.ERROR
+    assert result.target_writable is False
+    assert "غير قابل للكتابة" in result.message
+    assert client.calls == 0
+    assert not (item.path / "poster.jpg").exists()
+    processor.close()
+
+
+def test_permission_error_is_not_retried(
+    tmp_path: Path,
+    image_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A denied write must fail fast: no second download attempt."""
+    item = make_item(tmp_path)
+
+    def deny(*args: object, **kwargs: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    # the preflight probe is allowed to pass, so the failure happens in the
+    # download step itself (the folder became unwritable mid-run).
+    monkeypatch.setattr(
+        "app.services.processor.is_folder_writable", lambda folder: True
+    )
+    monkeypatch.setattr("app.services.images.open", deny, raising=False)
+    processor = Processor(
+        AppConfig(),
+        client=FakeClient(make_match(image_server)),
+        images=ImageService(quality=95),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="mediaart.images"):
+        result = processor.process_item(item)
+
+    assert "إعادة محاولة" not in caplog.text
+    assert result.status is Status.ERROR
+    assert "تعذر حفظ الصورة" in result.message
     processor.close()
