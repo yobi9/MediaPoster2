@@ -19,7 +19,7 @@ from pathlib import Path
 
 import requests
 
-from ..config import CACHE_PATH
+from ..config import CACHE_PATH, NEGATIVE_CACHE_PATH, load_config
 from ..errors import TMDBError, TMDBAuthError, TMDBRateLimitError
 from ..logging_setup import get_logger
 from ..models import MediaItem, TMDBMatch
@@ -71,6 +71,9 @@ class TMDBClient:
         cache_path: Path | None = None,
         prefer_localized_artwork: bool = True,
         cross_type_fallback: bool = True,
+        negative_cache_ttl_days: int | None = None,
+        negative_cache_path: Path | None = None,
+        refresh_negatives: bool = False,
     ) -> None:
         token = (token or "").strip()
         if not token:
@@ -97,6 +100,19 @@ class TMDBClient:
             ttl_days=cache_ttl_days,
             enabled=use_cache,
         )
+        # Negative cache: titles already known to be absent from TMDB, so a
+        # re-run does not pay for the same fruitless searches. It lives in its
+        # own file with its own TTL (JsonCache has one TTL per instance).
+        if negative_cache_ttl_days is None:
+            negative_cache_ttl_days = load_config().negative_cache_ttl_days
+        self.refresh_negatives = refresh_negatives
+        self.neg_cache = JsonCache(
+            negative_cache_path
+            if negative_cache_path is not None
+            else NEGATIVE_CACHE_PATH,
+            ttl_days=negative_cache_ttl_days,
+            enabled=use_cache,
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -104,25 +120,33 @@ class TMDBClient:
     def test_connection(self) -> dict:
         return self._get_json("/configuration", {})
 
-    def find_match(self, item: MediaItem) -> TMDBMatch | None:
+    def find_match(self, item: MediaItem, force_refresh: bool = False) -> TMDBMatch | None:
         title = (item.title or "").strip()
         if not title:
             return None
 
-        cache_key = "|".join(
-            (
-                "match-v2",
-                item.kind.value,
-                self.language,
-                "1" if self.prefer_localized_artwork else "0",
-                normalize_for_match(title),
-                str(item.year or ""),
-            )
+        scope = (
+            item.kind.value,
+            self.language,
+            "1" if self.prefer_localized_artwork else "0",
+            normalize_for_match(title),
+            str(item.year or ""),
         )
+        cache_key = "|".join(("match-v2", *scope))
+        negative_key = "|".join(("neg-v1", *scope))
+
         cached = self.cache.get(cache_key)
         if cached:
             logger.debug("نتيجة من الكاش: %s", title)
             return TMDBMatch.from_cache(cached)
+
+        # Negative cache: a title known to be absent is not searched again
+        # until the entry expires (or the user asks for a refresh).
+        if not (force_refresh or self.refresh_negatives):
+            negative = self.neg_cache.get(negative_key)
+            if negative and negative.get("reason") == "not_found":
+                logger.debug("لا مطابقة (كاش سلبي): %s", title)
+                return None
 
         primary = item.kind.tmdb_type
         best = self._best_candidate(primary, title, item.year)
@@ -139,11 +163,21 @@ class TMDBClient:
                 )
 
         if best is None or best[0] < MIN_ACCEPT_SCORE:
+            self.neg_cache.set(
+                negative_key,
+                {"ts": time.time(), "reason": "not_found"},
+            )
             return None
 
         score, match, language_used = best
         self._enrich_images(match)
         self.cache.set(cache_key, match.to_cache())
+        # A success neutralises any earlier negative entry for the same title
+        # (the item may have been added to TMDB in the meantime).
+        self.neg_cache.set(
+            negative_key,
+            {"ts": time.time(), "reason": "resolved"},
+        )
         logger.debug(
             "تم اختيار '%s' (%s) بدرجة %.1f [لغة البحث: %s]",
             match.title,
@@ -156,6 +190,7 @@ class TMDBClient:
     def close(self) -> None:
         try:
             self.cache.flush()
+            self.neg_cache.flush()
         finally:
             self._session.close()
 

@@ -64,6 +64,7 @@ DATA_DIR = get_data_dir()
 CONFIG_PATH = DATA_DIR / "config.json"
 LOG_PATH = DATA_DIR / "app_log.txt"
 CACHE_PATH = DATA_DIR / "tmdb_cache.json"
+NEGATIVE_CACHE_PATH = DATA_DIR / "tmdb_cache_neg.json"
 
 DEFAULT_POSTER_NAME = "poster.jpg"
 DEFAULT_BACKDROP_NAME = "fanart.jpg"
@@ -97,6 +98,8 @@ class AppConfig:
     max_retries: int = 3
     use_cache: bool = True
     cache_ttl_days: int = 30
+    #: عمر الكاش السلبي (عناصر غير موجودة في TMDB) بالأيام.
+    negative_cache_ttl_days: int = 30
 
     def __post_init__(self) -> None:
         self.tmdb_api_key = (self.tmdb_api_key or "").strip()
@@ -108,6 +111,17 @@ class AppConfig:
         self.request_timeout = _clamp_int(self.request_timeout, 5, 120, 20)
         self.max_retries = _clamp_int(self.max_retries, 1, 10, 3)
         self.cache_ttl_days = _clamp_int(self.cache_ttl_days, 1, 3650, 30)
+        # Unlike the other knobs (which are clamped), an out-of-range negative
+        # cache TTL is a configuration error and must be reported, not hidden.
+        try:
+            negative_ttl = int(self.negative_cache_ttl_days)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "negative_cache_ttl_days يجب أن يكون عدداً بين 1 و 365."
+            ) from exc
+        if not 1 <= negative_ttl <= 365:
+            raise ValueError("negative_cache_ttl_days يجب أن يكون بين 1 و 365.")
+        self.negative_cache_ttl_days = negative_ttl
         try:
             self.min_request_interval = min(5.0, max(0.0, float(self.min_request_interval)))
         except (TypeError, ValueError):
@@ -139,6 +153,10 @@ class AppConfig:
                     cleaned[key] = str(value)
             except (TypeError, ValueError):
                 continue
+        # A single invalid value must not discard the whole configuration.
+        negative_ttl = cleaned.get("negative_cache_ttl_days")
+        if negative_ttl is not None and not (1 <= int(negative_ttl) <= 365):
+            cleaned.pop("negative_cache_ttl_days")
         return cls(**cleaned)
 
     def save(self, path: Path | None = None) -> None:

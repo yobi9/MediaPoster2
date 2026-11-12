@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 
 from app.models import MediaItem, MediaKind
+from app.services.title_cleaner import normalize_for_match
 from app.services.tmdb import (
     TMDBClient,
     image_url,
@@ -207,3 +210,118 @@ def test_english_fallback_loses_to_a_better_primary_language_candidate() -> None
     assert match is not None
     assert match.title == "Me Before Me"
     assert client.search_languages == ["ar", "en"]
+
+
+# ----------------------------------------------------------------------
+# Negative cache (A2)
+# ----------------------------------------------------------------------
+class _CountingTMDB(TMDBClient):
+    """TMDB client with a real cache and a counter of network round-trips."""
+
+    def __init__(self, tmp_path: Path, results: dict[str, list[dict]]) -> None:
+        super().__init__(
+            "0" * 32,
+            language="ar",
+            use_cache=True,
+            cache_path=tmp_path / "cache.json",
+            negative_cache_path=tmp_path / "cache_neg.json",
+            negative_cache_ttl_days=30,
+        )
+        self.results = results
+        self.calls = 0
+
+    def _get_json(self, path: str, params: dict) -> dict:
+        if path.endswith("/images"):
+            return {"posters": [], "backdrops": []}
+        self.calls += 1
+        language = str(params.get("language") or "")
+        return {"results": self.results.get(language, [])}
+
+
+def _negative_key(title: str) -> str:
+    return "|".join(
+        ("neg-v1", "movie", "ar", "1", normalize_for_match(title), "")
+    )
+
+
+def test_missing_title_is_searched_only_once(tmp_path: Path) -> None:
+    """N1: العنصر غير الموجود يُبحث عنه مرة واحدة فقط (كاش سلبي)."""
+    client = _CountingTMDB(tmp_path, {"ar": [], "en": []})
+
+    assert client.find_match(_item("Unknown Film")) is None
+    first_calls = client.calls
+    assert first_calls > 0
+
+    assert client.find_match(_item("Unknown Film")) is None
+    assert client.calls == first_calls, "الكاش السلبي يجب أن يمنع طلب الشبكة الثاني"
+
+
+def test_force_refresh_bypasses_negative_cache(tmp_path: Path) -> None:
+    """N2: force_refresh يتجاوز الكاش السلبي ويطلق طلب شبكة جديداً."""
+    client = _CountingTMDB(tmp_path, {"ar": [], "en": []})
+    client.find_match(_item("Unknown Film"))
+    before = client.calls
+
+    assert client.find_match(_item("Unknown Film"), force_refresh=True) is None
+    assert client.calls > before
+
+
+def test_late_arrival_needs_a_refresh(tmp_path: Path) -> None:
+    """N3: فشل → ظهور لاحق في TMDB → نجاح (يتطلّب تجاوز الكاش السلبي)."""
+    client = _CountingTMDB(tmp_path, {"ar": [], "en": []})
+
+    # 1) لا يوجد في TMDB ⇒ نتيجة None + كاش سلبي.
+    assert client.find_match(_item("The Matrix")) is None
+    calls_after_failure = client.calls
+
+    # 2) العنصر يظهر في TMDB الآن.
+    client.results = {
+        "ar": [movie(title="The Matrix", original_title="The Matrix")],
+        "en": [],
+    }
+
+    # 3) بدون تجاوز ⇒ يبقى الكاش السلبي قائماً.
+    assert client.find_match(_item("The Matrix")) is None
+    assert client.calls == calls_after_failure
+
+    # 4) مع تجاوز ⇒ يُعثر عليه ويُكتب الكاش الإيجابي.
+    match = client.find_match(_item("The Matrix"), force_refresh=True)
+    assert match is not None
+    assert match.title == "The Matrix"
+
+    # 5) 호출 تالٍ بلا تجاوز ⇒ من الكاش الإيجابي.
+    again = client.find_match(_item("The Matrix"))
+    assert again is not None
+    assert again.title == "The Matrix"
+
+
+def test_expired_negative_entry_triggers_a_new_search(tmp_path: Path) -> None:
+    """N4: مدخل كاش سلبي منتهٍ الصلاحية ⇒ بحث شبكة جديد."""
+    negative_file = tmp_path / "cache_neg.json"
+    old_ts = time.time() - 31 * 86_400
+    negative_file.write_text(
+        json.dumps(
+            {
+                _negative_key("The Matrix"): {
+                    "ts": old_ts,
+                    "value": {"ts": old_ts, "reason": "not_found"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = _CountingTMDB(tmp_path, {"ar": [], "en": []})
+
+    assert client.find_match(_item("The Matrix")) is None
+    assert client.calls > 0, "المدخل المنتهي يجب ألا يمنع البحث"
+
+
+def test_negative_cache_is_disabled_with_no_cache(tmp_path: Path) -> None:
+    """مع use_cache=False لا يُخزَّن كاش سلبي ولا يُقرأ."""
+    client = _CountingTMDB(tmp_path, {"ar": [], "en": []})
+    client.neg_cache.enabled = False
+
+    assert client.find_match(_item("Unknown Film")) is None
+    before = client.calls
+    assert client.find_match(_item("Unknown Film")) is None
+    assert client.calls > before

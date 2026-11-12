@@ -161,3 +161,37 @@ def test_read_access_token_env_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TMDB_READ_ACCESS_TOKEN", "READTOKEN")
 
     assert resolve_token(AppConfig(tmdb_api_key="CFG")) == "READTOKEN"
+
+
+# ---------------------------------------------------------------------------
+# حدّ الكاش السلبي (A2 / N5)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("value", [0, -1, 366, 1000])
+def test_negative_cache_ttl_out_of_range_is_rejected(value: int) -> None:
+    """N5: قيمة خارج [1, 365] ⇒ ValueError (لا قصّ صامت)."""
+    with pytest.raises(ValueError):
+        AppConfig(negative_cache_ttl_days=value)
+
+
+@pytest.mark.parametrize("value", [1, 30, 365])
+def test_negative_cache_ttl_valid_range_is_accepted(value: int) -> None:
+    assert AppConfig(negative_cache_ttl_days=value).negative_cache_ttl_days == value
+
+
+def test_invalid_negative_ttl_in_config_file_is_ignored(tmp_path: Path) -> None:
+    """قيمة تالفة في config.json تُهمَل دون فقدان بقية الإعدادات."""
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "library_path": "D:/Media",
+                "negative_cache_ttl_days": 999,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_config(path)
+
+    assert loaded.negative_cache_ttl_days == 30
+    assert loaded.library_path == "D:/Media"

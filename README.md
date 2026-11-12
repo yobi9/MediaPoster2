@@ -183,9 +183,10 @@ D:\Media\Library
 
 ```text
 %LOCALAPPDATA%\MediaArtAutoSync\
-├── app_log.txt      ← السجل (دوار، حتى 3 ملفات)
-├── config.json      ← الإعدادات
-└── tmdb_cache.json  ← كاش نتائج TMDB (30 يوماً افتراضياً)
+├── app_log.txt           ← السجل (دوار، حتى 3 ملفات)
+├── config.json           ← الإعدادات
+├── tmdb_cache.json       ← كاش نتائج TMDB (30 يوماً افتراضياً)
+└── tmdb_cache_neg.json   ← كاش العناصر غير الموجودة في TMDB (30 يوماً افتراضياً)
 ```
 
 - زر **فتح مجلد البيانات** في الواجهة يفتح هذا المجلد.
@@ -227,6 +228,7 @@ run.bat --cli --path "D:\Media\Library" --overwrite
 | `--dry-run` | بحث فقط دون كتابة. |
 | `--convert-only` | تحويل WebP فقط. |
 | `--no-cache` | تعطيل الكاش لهذه الجلسة. |
+| `--refresh-negatives` | تجاهل الكاش السلبي وإعادة البحث عن العناصر غير الموجودة في TMDB. |
 | `--fail-on-not-found` | إنهاء التشغيل برمز `3` إذا وُجد عنصر غير موجود في TMDB (بدونه يبقى الرمز `0`). |
 | `--verbose` | سجل تفصيلي. |
 

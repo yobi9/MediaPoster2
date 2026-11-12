@@ -49,6 +49,7 @@ def run_with(
     tmp_path: Path,
     *statuses: Status,
     extra_args: tuple[str, ...] = (),
+    client_cls=None,
 ) -> int:
     library = tmp_path / "Library"
     library.mkdir(parents=True, exist_ok=True)
@@ -63,7 +64,7 @@ def run_with(
             MediaItem(path=item_folder, kind=MediaKind.MOVIE, title="عنصر", year=2020)
         ],
     )
-    monkeypatch.setattr(cli, "TMDBClient", FakeClient)
+    monkeypatch.setattr(cli, "TMDBClient", client_cls or FakeClient)
     monkeypatch.setattr(
         cli, "Processor", lambda config, client=None, images=None: FakeProcessor(
             make_summary(item_folder, *statuses)
@@ -240,3 +241,46 @@ def test_quality_default_is_95(
 
     assert code == 0
     assert config.jpeg_quality == 95
+
+
+# ---------------------------------------------------------------------------
+# --refresh-negatives (A2 / N6)
+# ---------------------------------------------------------------------------
+def test_refresh_negatives_reaches_the_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """N6: --refresh-negatives يُمرَّر إلى TMDBClient."""
+    recorded: dict[str, object] = {}
+
+    class RecordingClient(FakeClient):
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            recorded.update(kwargs)
+            super().__init__()
+
+    monkeypatch.setattr(cli, "TMDBClient", RecordingClient)
+    run_with(
+        monkeypatch,
+        tmp_path,
+        Status.OK,
+        extra_args=("--refresh-negatives",),
+        client_cls=RecordingClient,
+    )
+
+    assert recorded.get("refresh_negatives") is True
+
+
+def test_refresh_negatives_is_off_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """بلا flag ⇒ refresh_negatives=False."""
+    recorded: dict[str, object] = {}
+
+    class RecordingClient(FakeClient):
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            recorded.update(kwargs)
+            super().__init__()
+
+    monkeypatch.setattr(cli, "TMDBClient", RecordingClient)
+    run_with(monkeypatch, tmp_path, Status.OK, client_cls=RecordingClient)
+
+    assert recorded.get("refresh_negatives") is False

@@ -69,6 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="إنهاء التشغيل برمز 3 إذا وُجد عنصر غير موجود في TMDB (الافتراضي: رمز 0).",
     )
+    parser.add_argument(
+        "--refresh-negatives",
+        action="store_true",
+        help="تجاهل الكاش السلبي وأعد البحث عن العناصر غير الموجودة في TMDB.",
+    )
     parser.add_argument("--verbose", action="store_true", help="سجل تفصيلي.")
     parser.add_argument("--version", action="version", version=VERSION)
     return parser
@@ -140,6 +145,8 @@ def run_cli(args: argparse.Namespace) -> int:
                 use_cache=config.use_cache,
                 cache_ttl_days=config.cache_ttl_days,
                 prefer_localized_artwork=config.prefer_localized_artwork,
+                negative_cache_ttl_days=config.negative_cache_ttl_days,
+                refresh_negatives=bool(args.refresh_negatives),
             )
         images = ImageService(quality=config.jpeg_quality, timeout=config.request_timeout)
         processor = Processor(config, client=client, images=images)
