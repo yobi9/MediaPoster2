@@ -545,6 +545,23 @@ raw
 
 ---
 
+### 11.5 التوازي والإلغاء (B1/P9)
+
+- `AppConfig.max_workers` (1–8، افتراضي 3). `1` يعني المسار التسلسلي القديم حرفياً.
+- `Processor.run` يوزّع العناصر على `ThreadPoolExecutor`، ثم ينتظر الـfutures
+  **بترتيب الإرسال**: النتائج وإشارات الواجهة تظهر بترتيب المكتبة دائماً.
+- كل مهمة معزولة في `_process_isolated`: استثناء عنصر واحد يصبح `ERROR` لذلك
+  العنصر فقط ولا يوقف البقية.
+- التهدئة مشتركة داخل `TMDBClient` (`_throttle_lock` يلفّ النوم وتحديث
+  `_last_request`)، فعدة خيوط لا تتجاوز المعدل.
+- `OutputManifest` يستخدم `RLock` حول `update_entry`/`flush`/`entry`. الـflush يبقى
+  بعد كل عنصر: كلفته `fsync` لملف صغير أمام ثانية شبكة، وإبقاؤه يحفظ وعد
+  «لا تفقد عملاً مكتملاً عند إغلاق مفاجئ».
+- الإلغاء تعاوني: `scanner.discover_media(should_cancel=...)` يتوقف بين المجلدات،
+  و`images.convert_webp_in_folder(should_cancel=...)` بين الملفات ويعيد
+  `ConversionResult.cancelled`. الـCLI يحوّل SIGINT إلى `Event` (رمز 130)،
+  والواجهة تمرّر `QThread.requestInterruption` عبر `RunWorker._should_cancel`.
+
 ## 12. الواجهة الرسومية — `ui/`
 
 ### 12.1 البنية
