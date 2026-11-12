@@ -593,3 +593,64 @@ def test_output_root_equal_to_library_is_ignored(
     assert result.status is Status.OK
     assert (item.path / "poster.jpg").is_file()
     assert list(tmp_path.glob("**/.mediaart_manifest.json")) == []
+
+
+# ----------------------------------------------------------------------
+# فشل مبكر لـoutput_root + رسائل D2 (D1/D2)
+# ----------------------------------------------------------------------
+BAD_OUTPUT_ROOT = "Z:/nonexistent_xyz_123"
+
+
+def test_unusable_output_root_fails_at_config_construction(tmp_path: Path) -> None:
+    """F4-1: مسار إخراج غير قابل للإنشاء ⇒ ValueError يذكر المسار الفعلي."""
+    with pytest.raises(ValueError) as excinfo:
+        AppConfig(output_root=BAD_OUTPUT_ROOT)
+
+    message = str(excinfo.value)
+    # المسار الفعلي بعد تطبيع Path (فواصل Windows على هذه المنصة).
+    assert str(Path(BAD_OUTPUT_ROOT)) in message
+    assert "غير قابل للإنشاء" in message
+
+
+def test_unusable_output_root_fails_before_any_processing(tmp_path: Path) -> None:
+    """F4-2: مجلد صالح عند بناء config ثم اختفى ⇒ Processor يفشل فوراً.
+
+    هذا هو الفراغ الزمني بين `AppConfig.__post_init__` وبناء المعالج (انقطاع
+    شبكة أو نزع قرص)؛ بدونه كان الفشل يظهر ERROR لكل عنصر.
+    """
+    config = AppConfig()
+    config.output_root = BAD_OUTPUT_ROOT
+
+    with pytest.raises(ValueError) as excinfo:
+        Processor(config, client=FakeClient(None), images=ImageService())
+
+    assert str(Path(BAD_OUTPUT_ROOT)) in str(excinfo.value)
+
+
+def test_webp_conversion_is_disabled_once_with_output_root(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """F5/D2: output_root ⇒ لا تحويل، تحذير واحد، SKIPPED، webp_converted=0."""
+    item = make_item(tmp_path)
+    webp = make_webp(item.path / "poster.webp")
+    output = tmp_path / "out"
+    processor = Processor(
+        _output_config(tmp_path, output, convert_only=True),
+        client=FakeClient(None),
+        images=ImageService(),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="mediaart.processor"):
+        summary = processor.run([item])
+    processor.close()
+
+    result = summary.results[0]
+    assert result.status is Status.SKIPPED
+    assert summary.webp_converted == 0
+    assert webp.is_file()  # المصدر لم يُلمس
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if "تم تعطيل تحويل WebP" in record.getMessage()
+    ]
+    assert len(warnings) == 1

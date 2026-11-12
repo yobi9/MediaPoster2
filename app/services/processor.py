@@ -12,6 +12,7 @@ from ..config import (
     DEFAULT_POSTER_NAME,
     ALTERNATE_BACKDROP_NAME,
     FOLDER_THUMB_NAME,
+    ensure_output_root,
 )
 from ..errors import CancelledError, ImageError, MediaArtError
 from ..logging_setup import get_logger, log_success
@@ -35,6 +36,11 @@ class Processor:
         client: TMDBClient | None = None,
         images: ImageService | None = None,
     ) -> None:
+        # Fail before any item is touched: the folder was valid when the config
+        # was built, but a dropped share or unplugged drive must not turn into
+        # one ERROR per item at `target.mkdir()`.
+        if (config.output_root or "").strip():
+            ensure_output_root(config.output_root)
         self.config = config
         self.client = client
         self.images = images or ImageService(
@@ -221,7 +227,9 @@ class Processor:
                 # it cannot run against a read-only library.
                 if not self._warned_webp_skip:
                     logger.warning(
-                        "مع output_root: تحويل WebP داخل المصدر معطّل (المصدر للقراءة فقط)."
+                        "تم تعطيل تحويل WebP لأن output_root مُعيَّن (التحويل "
+                        "يكتب بجوار المصدر). حوّل ملفات WebP يدوياً قبل التشغيل، "
+                        "أو شغّل بلا --output-root."
                     )
                     self._warned_webp_skip = True
                 cfg_convert_webp = False

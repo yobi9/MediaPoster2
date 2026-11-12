@@ -218,7 +218,7 @@ def ensure_output_root(value: str) -> Path:
         os.unlink(probe_name)
     except OSError as exc:
         raise ValueError(
-            f"output_root غير قابل للكتابة: {path} ({exc.strerror or exc})"
+            f"output_root غير قابل للإنشاء: {path} — {exc.strerror or exc}"
         ) from exc
     return path
 
