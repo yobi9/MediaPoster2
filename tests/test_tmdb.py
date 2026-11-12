@@ -228,6 +228,7 @@ class _CountingTMDB(TMDBClient):
             negative_cache_ttl_days=30,
         )
         self.results = results
+        self.by_query: dict[str, list[dict]] = {}
         self.calls = 0
 
     def _get_json(self, path: str, params: dict) -> dict:
@@ -235,6 +236,8 @@ class _CountingTMDB(TMDBClient):
             return {"posters": [], "backdrops": []}
         self.calls += 1
         language = str(params.get("language") or "")
+        if self.by_query:
+            return {"results": self.by_query.get(str(params.get("query") or ""), [])}
         return {"results": self.results.get(language, [])}
 
 
@@ -325,3 +328,32 @@ def test_negative_cache_is_disabled_with_no_cache(tmp_path: Path) -> None:
     before = client.calls
     assert client.find_match(_item("Unknown Film")) is None
     assert client.calls > before
+
+
+def test_negative_cache_is_bound_to_the_title(tmp_path: Path) -> None:
+    """N7: الكاش السلبي مربوط بعنوان المجلد لا بالعنصر.
+
+    تغيير اسم المجلد ينشئ مفتاحاً جديداً ⇒ العنصر الجديد غير محجوب،
+    بينما يبقى العنصر القديم محجوباً بكاشه الخاص.
+    """
+    client = _CountingTMDB(tmp_path, {"ar": [], "en": []})
+
+    # 1) "Alpha" غير موجود ⇒ مدخل كاش سلبي تحت "Alpha".
+    assert client.find_match(_item("Alpha")) is None
+
+    # 2) "Beta" له مفتاح خاص به ⇒ لا يُحجب بالعنصر السابق.
+    client.by_query = {
+        "Alpha": [movie(title="Alpha", original_title="Alpha")],
+        "Beta": [movie(title="Beta", original_title="Beta")],
+    }
+    match_beta = client.find_match(_item("Beta"))
+    assert match_beta is not None
+    assert match_beta.title == "Beta"
+
+    # 3) "Alpha" ما زال محجوباً بكاشه (تسمية "Beta" لم تمسّه).
+    assert client.find_match(_item("Alpha")) is None
+
+    # 4) تجاوز الكاش ⇒ "Alpha" يُعثر عليه (ويُحايد مفتاحه).
+    match_alpha = client.find_match(_item("Alpha"), force_refresh=True)
+    assert match_alpha is not None
+    assert match_alpha.title == "Alpha"
