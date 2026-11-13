@@ -606,3 +606,106 @@ def test_output_root_option_rejects_unwritable_path(
     )
 
     assert code == 2
+
+
+# ---------------------------------------------------------------------------
+# احترام إعداد download_fanart المحفوظ عند غياب/تحديد --images (استكمال)
+# ---------------------------------------------------------------------------
+def _run_and_capture_loaded_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    loaded_config: AppConfig,
+    *extra_args: str,
+) -> tuple[int, AppConfig]:
+    """يشغّل run_cli بإعداد محمّل مُعطى ويعيد (الخروج، نفس كائن الإعداد بعد المعالجة)."""
+    library = tmp_path / "Library"
+    library.mkdir(parents=True, exist_ok=True)
+    item_folder = library / "Movie"
+    item_folder.mkdir(parents=True, exist_ok=True)
+
+    captured: dict[str, AppConfig] = {}
+
+    def fake_load_config() -> AppConfig:
+        loaded_config.library_path = str(library)
+        captured["config"] = loaded_config
+        return loaded_config
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr(
+        cli,
+        "discover_media",
+        lambda root, media_filter="all", **kwargs: [
+            MediaItem(path=item_folder, kind=MediaKind.MOVIE, title="عنصر", year=2020)
+        ],
+    )
+    monkeypatch.setattr(cli, "TMDBClient", FakeClient)
+    monkeypatch.setattr(
+        cli,
+        "Processor",
+        lambda config, client=None, images=None: FakeProcessor(
+            make_summary(item_folder, Status.OK)
+        ),
+    )
+    monkeypatch.setenv("TMDB_API_KEY", "TESTTOKEN")
+
+    args = cli.build_parser().parse_args(
+        ["--cli", "--path", str(library), *extra_args]
+    )
+    code = cli.run_cli(args)
+    return code, captured["config"]
+
+
+def test_cli_respects_saved_fanart_enabled_without_images_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """بلا --images ⇒ تبقى أنواع الصور (بما فيها Fanart) كما في الإعداد المحفوظ."""
+    loaded = AppConfig(
+        download_poster=True, download_fanart=True, download_background=False
+    )
+
+    code, config = _run_and_capture_loaded_config(monkeypatch, tmp_path, loaded)
+
+    assert code == 0
+    assert (config.download_poster, config.download_fanart, config.download_background) == (
+        True,
+        True,
+        False,
+    )
+
+
+def test_cli_respects_saved_fanart_disabled_without_images_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """بلا --images ⇒ Fanart المعطّل في الإعداد المحفوظ يبقى معطلاً."""
+    loaded = AppConfig(
+        download_poster=True, download_fanart=False, download_background=True
+    )
+
+    code, config = _run_and_capture_loaded_config(monkeypatch, tmp_path, loaded)
+
+    assert code == 0
+    assert (config.download_poster, config.download_fanart, config.download_background) == (
+        True,
+        False,
+        True,
+    )
+
+
+def test_cli_explicit_images_overrides_saved_fanart_setting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """تحديد --images صراحةً يستبدل اختيار الأنواع المحفوظ للجلسة."""
+    loaded = AppConfig(
+        download_poster=True, download_fanart=True, download_background=True
+    )
+
+    code, config = _run_and_capture_loaded_config(
+        monkeypatch, tmp_path, loaded, "--images", "poster,background"
+    )
+
+    assert code == 0
+    assert (config.download_poster, config.download_fanart, config.download_background) == (
+        True,
+        False,
+        True,
+    )

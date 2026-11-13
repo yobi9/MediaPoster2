@@ -53,6 +53,15 @@ class JsonCache:
                     self._data.pop(stale, None)
             self._dirty = True
 
+    def delete(self, key: str) -> None:
+        """حذف مدخل كاش فردي بشكل آمن مع القفل، دون التأثير على بقية المدخلات."""
+        if not self.enabled:
+            return
+        with self._lock:
+            if key in self._data:
+                self._data.pop(key, None)
+                self._dirty = True
+
     # ------------------------------------------------------------------
     def _load(self) -> None:
         assert self.path is not None

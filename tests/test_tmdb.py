@@ -260,13 +260,23 @@ def test_english_fallback_loses_to_a_better_primary_language_candidate() -> None
 class _CountingTMDB(TMDBClient):
     """TMDB client with a real cache and a counter of network round-trips."""
 
-    def __init__(self, tmp_path: Path, results: dict[str, list[dict]]) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        results: dict[str, list[dict]],
+        cache_path: Path | None = None,
+        negative_cache_path: Path | None = None,
+    ) -> None:
         super().__init__(
             "0" * 32,
             language="ar",
             use_cache=True,
-            cache_path=tmp_path / "cache.json",
-            negative_cache_path=tmp_path / "cache_neg.json",
+            cache_path=cache_path if cache_path is not None else tmp_path / "cache.json",
+            negative_cache_path=(
+                negative_cache_path
+                if negative_cache_path is not None
+                else tmp_path / "cache_neg.json"
+            ),
             negative_cache_ttl_days=30,
         )
         self.results = results
@@ -522,3 +532,348 @@ def test_enrichment_saves_requests(tmp_path: Path) -> None:
     assert plain.calls == 1
     assert localized.calls == 2
     assert localized.calls > plain.calls
+
+
+# ----------------------------------------------------------------------
+# اختبارات القبول: إزالة cross_type_fallback وفرض تطابق نوع العمل
+# ----------------------------------------------------------------------
+
+
+class _EndpointTrackingTMDB(TMDBClient):
+    """عميل وهمي يسجل نقاط النهاية (media_type) التي استُدُعِيَت لكل بحث."""
+
+    def __init__(self, payloads: dict[str, list[dict]], language: str = "ar") -> None:
+        super().__init__("0" * 32, language=language, use_cache=False)
+        self.payloads = payloads
+        self.called_endpoints: list[str] = []  # "tv" أو "movie"
+
+    def _get_json(self, path: str, params: dict) -> dict:
+        if path.endswith("/images"):
+            return {"posters": [], "backdrops": []}
+        # استخرج media_type من المسار /search/{media_type}
+        parts = path.strip("/").split("/")
+        media_type = parts[1] if len(parts) > 1 else ""
+        self.called_endpoints.append(media_type)
+        language = str(params.get("language") or "")
+        return {"results": self.payloads.get(language, [])}
+
+
+def _series_item(title: str) -> MediaItem:
+    return MediaItem(
+        path=Path("C:/library") / title,
+        kind=MediaKind.SERIES,
+        title=title,
+    )
+
+
+def _movie_item(title: str) -> MediaItem:
+    return MediaItem(
+        path=Path("C:/library") / title,
+        kind=MediaKind.MOVIE,
+        title=title,
+    )
+
+
+def test_series_element_only_calls_tv_search(tmp_path: Path) -> None:
+    """AC-1: عنصر مسلسل يستدعي /search/tv فقط، ولا يستدعي /search/movie نيابة عنه."""
+    client = _EndpointTrackingTMDB(
+        {
+            "ar": [],  # لا نتائج للمسلسل
+            "en": [],  # لا نتائج للمسلسل بالإنجليزية tampoco
+        }
+    )
+    # فيلم بنفس الاسم موجود في TMDB ولكن shouldn't يُستدعى
+    client.payloads = {
+        "ar": [
+            movie(title="العنوان نفسه", original_title="العنوان نفسه", release_date="2024-01-01")
+        ],
+        "en": [],
+    }
+
+    match = client.find_match(_series_item("العنوان نفسه"))
+
+    assert match is None  # لا نتيجة للمسلسل، ولا Fallback للأفلام
+    called = set(client.called_endpoints)
+    assert called == {"tv"}, f"التوقع: tv فقط، لكن استُدعِيَ: {called}"
+
+
+def test_movie_element_only_calls_movie_search(tmp_path: Path) -> None:
+    """AC-2: عنصر فيلم يستدعي /search/movie فقط، ولا يستدعي /search/tv نيابة عنه."""
+    client = _EndpointTrackingTMDB(
+        {
+            "ar": [],
+            "en": [],
+        }
+    )
+    # مسلسل بنفس الاسم موجود في TMDB ولكن shouldn't يُستدعى
+    client.payloads = {
+        "ar": [
+            tv(name="العنوان نفسه", original_name="العنوان نفسه", first_air_date="2024-01-01")
+        ],
+        "en": [],
+    }
+
+    match = client.find_match(_movie_item("العنوان نفسه"))
+
+    assert match is None  # لا نتيجة للفيلم، ولا Fallback للمسلسلات
+    called = set(client.called_endpoints)
+    assert called == {"movie"}, f"التوقع: movie فقط، لكن استُدعِيَ: {called}"
+
+
+def test_correct_type_wins_in_all_filter(tmp_path: Path) -> None:
+    """AC-5: عندما يكون المسلسل والفيلم موجودين، يجب اختيار النوع الصحيح للعنصر."""
+    client = _EndpointTrackingTMDB(
+        {
+            "ar": [
+                tv(
+                    name="العنوان نفسه",
+                    original_name="العنوان نفسه",
+                    first_air_date="2024-01-01",
+                    popularity=50.0,
+                    vote_average=7.0,
+                ),
+                movie(
+                    title="العنوان نفسه",
+                    original_title="العنوان نفسه",
+                    release_date="2024-01-01",
+                    popularity=100.0,
+                    vote_average=9.0,
+                ),
+            ],
+        }
+    )
+
+    match = client.find_match(_series_item("العنوان نفسه"))
+
+    assert match is not None
+    assert match.media_type == "tv"
+    assert match.title == "العنوان نفسه"
+    called = set(client.called_endpoints)
+    assert called == {"tv"}, f"التوقع: tv فقط، لكن استُدعِيَ: {called}"
+
+
+def test_no_correct_type_but_excellent_other_type(tmp_path: Path) -> None:
+    """AC-6: عنصر مسلسل، TMDB يحتوي على فيلم بدرجة ممتازة ولا يوجد مسلسل ⇒ NOT_FOUND."""
+    client = _EndpointTrackingTMDB(
+        {
+            "ar": [],
+            "en": [],
+        }
+    )
+    client.payloads = {
+        "ar": [
+            movie(
+                title="العنوان نفسه",
+                original_title="العنوان نفسه",
+                release_date="2024-01-01",
+                popularity=200.0,
+                vote_average=9.5,
+            )
+        ],
+        "en": [],
+    }
+
+    match = client.find_match(_series_item("العنوان نفسه"))
+
+    assert match is None
+    called = set(client.called_endpoints)
+    assert called == {"tv"}, f"التوقع: tv فقط، لكن استُدعِيَ: {called}"
+
+
+def test_mismatched_type_result_not_stored_in_cache(tmp_path: Path) -> None:
+    """AC-8: نتيجة ذات media_type مخالف لنوع العنصر لا تُخزّن في الكاش."""
+    client = _CountingTMDB(tmp_path, {"ar": [], "en": []})
+    client.by_query = {
+        "العنوان نفسه": [
+            movie(
+                title="العنوان نفسه",
+                original_title="العنوان نفسه",
+                release_date="2024-01-01",
+            )
+        ]
+    }
+
+    match = client.find_match(_series_item("العنوان نفسه"))
+
+    assert match is None
+    # تأكد أن الكاش لا يحتوي على المدخل
+    cache_key = "|".join(
+        ("match-v2", "series", "ar", "1", normalize_for_match("العنوان نفسه"), "")
+    )
+    assert client.cache.get(cache_key) is None
+
+
+def test_delete_single_cache_entry_reflects_in_file(tmp_path: Path) -> None:
+    """AC-9: حذف مدخل كاش واحد ينعكس على الذاكرة والملف، وبقية المدخلات سليمة."""
+    cache_file = tmp_path / "test_cache.json"
+    client = _CountingTMDB(tmp_path, {"ar": [], "en": []}, cache_path=cache_file)
+
+    # تخزين مدخلين
+    client.by_query = {
+        "الفيلم أ": [movie(title="الفيلم أ", original_title="الفيلم أ")],
+        "المسلسل ب": [tv(name="المسلسل ب", original_name="المسلسل ب")],
+    }
+    client.find_match(_movie_item("الفيلم أ"))
+    client.find_match(_series_item("المسلسل ب"))
+
+    assert client.cache.get(
+        "|".join(("match-v2", "movie", "ar", "1", normalize_for_match("الفيلم أ"), ""))
+    ) is not None
+    assert client.cache.get(
+        "|".join(("match-v2", "series", "ar", "1", normalize_for_match("المسلسل ب"), ""))
+    ) is not None
+
+    # حذف مدخل واحد فقط
+    key_to_delete = "|".join(
+        ("match-v2", "movie", "ar", "1", normalize_for_match("الفيلم أ"), "")
+    )
+    client.cache.delete(key_to_delete)
+
+    assert client.cache.get(key_to_delete) is None
+    assert client.cache.get(
+        "|".join(("match-v2", "series", "ar", "1", normalize_for_match("المسلسل ب"), ""))
+    ) is not None
+
+    # إعادة فتح الملف والتحقق
+    client.cache.flush()
+    import json
+
+    data = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert key_to_delete not in data
+    series_key = "|".join(
+        ("match-v2", "series", "ar", "1", normalize_for_match("المسلسل ب"), "")
+    )
+    assert series_key in data
+
+
+def test_cache_rejects_wrong_type_on_retrieval(tmp_path: Path) -> None:
+    """AC-10: كاش قديم يحتوي على نتيجة فيلم تحت مفتاح مسلسل ⇒ يُرفض ويُحذف فردياً."""
+    cache_file = tmp_path / "test_cache_neg.json"
+    # كاش قديم يحتوي على نتيجة فيلم تحت مفتاح系列
+    old_cache = {
+        "|".join(("match-v2", "series", "ar", "1", normalize_for_match("العنوان نفسه"), "")): {
+            "ts": 1794568927.0,
+            "value": {
+                "tmdb_id": 999,
+                "media_type": "movie",
+                "title": "العنوان نفسه",
+                "original_title": "العنوان نفسه",
+                "year": 2024,
+                "poster_path": "/poster.jpg",
+                "backdrop_path": "/backdrop.jpg",
+                "popularity": 1.0,
+                "vote_average": 8.0,
+                "overview": "",
+            },
+        }
+    }
+    cache_file.write_text(json.dumps(old_cache), encoding="utf-8")
+
+    client = _CountingTMDB(
+        tmp_path,
+        {"ar": [], "en": []},
+        cache_path=cache_file,
+        negative_cache_path=tmp_path / "neg.json",
+    )
+    client.by_query = {
+        "العنوان نفسه": [
+            tv(
+                name="العنوان نفسه",
+                original_name="العنوان نفسه",
+                first_air_date="2024-01-01",
+            )
+        ]
+    }
+
+    match = client.find_match(_series_item("العنوان نفسه"))
+
+    assert match is not None
+    assert match.media_type == "tv"
+    assert match.title == "العنوان نفسه"
+    # المدخل القديم المرتبط بالفيلم قد رُفض وتم استبداله بنتيجة المسلسل الصحيحة
+    old_key = "|".join(
+        ("match-v2", "series", "ar", "1", normalize_for_match("العنوان نفسه"), "")
+    )
+    cached_after = client.cache.get(old_key)
+    assert cached_after is not None
+    assert cached_after.get("media_type") == "tv"
+
+
+def test_language_fallback_inside_correct_type(tmp_path: Path) -> None:
+    """AC-11: مسلسل لا يُعثر عليه بالعربية، يُعثر عليه بالإنجليزية تحت /search/tv فقط."""
+    client = _EndpointTrackingTMDB(
+        {
+            "ar": [],
+            "en": [
+                tv(
+                    name="المسلسل الأجنبي",
+                    original_name="Foreign Series",
+                    first_air_date="2023-01-01",
+                )
+            ],
+        }
+    )
+
+    match = client.find_match(_series_item("المسلسل الأجنبي"))
+
+    assert match is not None
+    assert match.media_type == "tv"
+    assert match.title == "المسلسل الأجنبي"
+    called = set(client.called_endpoints)
+    assert called == {"tv"}
+
+
+def test_media_type_uniformity_across_layers() -> None:
+    """AC-13: توحيد قيم أنواع الوسائط عبر MediaKind و tmdb_type و media_type ومفتاح الكاش."""
+    assert MediaKind.SERIES.tmdb_type == "tv"
+    assert MediaKind.MOVIE.tmdb_type == "movie"
+    assert MediaKind.SERIES.value == "series"
+    assert MediaKind.MOVIE.value == "movie"
+
+    match_tv = to_match(tv(), "tv")
+    assert match_tv.media_type == "tv"
+    match_movie = to_match(movie(), "movie")
+    assert match_movie.media_type == "movie"
+
+    # مفتاح الكاش يستخدم value (series/movie) وليس tmdb_type (tv/movie)
+    key_series = "|".join(("match-v2", "series", "ar", "1", "some title", ""))
+    key_movie = "|".join(("match-v2", "movie", "ar", "1", "some title", ""))
+    assert key_series != key_movie
+    assert "series" in key_series
+    assert "movie" in key_movie
+
+
+def test_negative_cache_film_does_not_block_series(tmp_path: Path) -> None:
+    """AC-14: مدخل not_found لفيلم لا يمنع البحث عن مسلسل يحمل الاسم نفسه."""
+    cache_file = tmp_path / "test_cache.json"
+    neg_file = tmp_path / "test_neg.json"
+
+    # كاش سلبي لفيلم بنفس العنوان
+    neg_data = {
+        "|".join(("neg-v1", "movie", "ar", "1", normalize_for_match("العنوان نفسه"), "")): {
+            "ts": 1794568927.0,
+            "value": {"ts": 1794568927.0, "reason": "not_found"},
+        }
+    }
+    neg_file.write_text(json.dumps(neg_data), encoding="utf-8")
+
+    client = _CountingTMDB(
+        tmp_path,
+        {"ar": [], "en": []},
+        cache_path=cache_file,
+        negative_cache_path=tmp_path / "neg.json",
+    )
+    client.by_query = {
+        "العنوان نفسه": [
+            tv(
+                name="العنوان نفسه",
+                original_name="العنوان نفسه",
+                first_air_date="2024-01-01",
+            )
+        ]
+    }
+
+    match = client.find_match(_series_item("العنوان نفسه"))
+
+    assert match is not None
+    assert match.media_type == "tv"

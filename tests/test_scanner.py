@@ -87,3 +87,25 @@ def test_helpers() -> None:
     assert has_episode_marker("Show.S01E02.1080p.mkv")
     assert has_episode_marker("Show 1x02.mkv")
     assert not has_episode_marker("Movie.2020.mkv")
+
+
+def test_media_filter_movies_only_excludes_series(tmp_path: Path) -> None:
+    """AC-3: media_filter="movies" يستبعد المسلسلات من الماسح، فلا تصل إلى TMDB."""
+    touch(tmp_path, "Movies/Inception (2010)/Inception.mkv")
+    touch(tmp_path, "TV/Show/Season 1/S01E01.mkv")
+
+    movies = discover_media(tmp_path, media_filter="movies")
+
+    assert [item.kind for item in movies] == [MediaKind.MOVIE]
+    assert all(item.kind is MediaKind.MOVIE for item in movies)
+
+
+def test_media_filter_series_only_excludes_movies(tmp_path: Path) -> None:
+    """AC-4: media_filter="series" يستبعد الأفلام من الماسح، فلا تصل إلى TMDB."""
+    touch(tmp_path, "Movies/Inception (2010)/Inception.mkv")
+    touch(tmp_path, "TV/Show/Season 1/S01E01.mkv")
+
+    series = discover_media(tmp_path, media_filter="series")
+
+    assert [item.kind for item in series] == [MediaKind.SERIES]
+    assert all(item.kind is MediaKind.SERIES for item in series)

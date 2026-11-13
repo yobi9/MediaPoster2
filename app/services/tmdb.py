@@ -32,8 +32,6 @@ USER_AGENT = "MediaArtAutoSync/1.0 (+https://www.themoviedb.org/)"
 
 # A match below this score is considered "not found" rather than "wrong movie".
 MIN_ACCEPT_SCORE = 55.0
-# Cross-type fallback (movie <-> tv) must be a very strong match.
-CROSS_TYPE_MIN_SCORE = 80.0
 # Second language tried when the user's language returns no acceptable match.
 FALLBACK_LANGUAGE = "en"
 
@@ -70,7 +68,6 @@ class TMDBClient:
         cache_ttl_days: int = 30,
         cache_path: Path | None = None,
         prefer_localized_artwork: bool = True,
-        cross_type_fallback: bool = True,
         negative_cache_ttl_days: int | None = None,
         negative_cache_path: Path | None = None,
         refresh_negatives: bool = False,
@@ -85,7 +82,6 @@ class TMDBClient:
         self.min_interval = max(0.0, min_interval)
         self.max_retries = max(1, max_retries)
         self.prefer_localized_artwork = prefer_localized_artwork
-        self.cross_type_fallback = cross_type_fallback
         # Image sizes: "original" is the full resolution and is roughly ten
         # times heavier, so the defaults are the sized variants.
         if poster_size is None or backdrop_size is None:
@@ -147,8 +143,19 @@ class TMDBClient:
 
         cached = self.cache.get(cache_key)
         if cached:
-            logger.debug("نتيجة من الكاش: %s", title)
-            return TMDBMatch.from_cache(cached)
+            if cached.get("media_type") != item.kind.tmdb_type:
+                # مدخل كاش قديم لنوع مختلف عن نوع العنصر المطلوب: رفضه وحذفه فردياً
+                self.cache.delete(cache_key)
+                logger.debug(
+                    "تم رفض مدخل كاش قديم لنوع غير مطابق (%s ≠ %s): %s",
+                    cached.get("media_type"),
+                    item.kind.tmdb_type,
+                    title,
+                )
+                cached = None
+            if cached:
+                logger.debug("نتيجة من الكاش: %s", title)
+                return TMDBMatch.from_cache(cached)
 
         # Negative cache: a title known to be absent is not searched again
         # until the entry expires (or the user asks for a refresh).
@@ -161,17 +168,6 @@ class TMDBClient:
         primary = item.kind.tmdb_type
         best = self._best_candidate(primary, title, item.year)
 
-        if (best is None or best[0] < MIN_ACCEPT_SCORE) and self.cross_type_fallback:
-            alternate = "tv" if primary == "movie" else "movie"
-            alt = self._best_candidate(alternate, title, item.year)
-            if alt and alt[0] >= CROSS_TYPE_MIN_SCORE and (best is None or alt[0] > best[0]):
-                best = alt
-                logger.warning(
-                    "تم العثور على '%s' كنوع مختلف (%s)؛ تحقق من التصنيف.",
-                    alt[1].title,
-                    "مسلسل" if alternate == "tv" else "فيلم",
-                )
-
         if best is None or best[0] < MIN_ACCEPT_SCORE:
             self.neg_cache.set(
                 negative_key,
@@ -181,6 +177,15 @@ class TMDBClient:
 
         score, match, language_used = best
         self._enrich_images(match)
+        if match.media_type != item.kind.tmdb_type:
+            # رفض تخزين نتيجة من نوع مخالف لنوع العنصر المطلوب
+            logger.warning(
+                "تم رفض نتيجة '%s' لأن media_type (%s) لا يطابق نوع العنصر (%s).",
+                match.title,
+                match.media_type,
+                item.kind.tmdb_type,
+            )
+            return None
         self.cache.set(cache_key, match.to_cache())
         # A success neutralises any earlier negative entry for the same title
         # (the item may have been added to TMDB in the meantime).

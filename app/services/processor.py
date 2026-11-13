@@ -104,7 +104,8 @@ class Processor:
         folder: Path,
         target: Path,
         has_poster: bool,
-        has_backdrop: bool,
+        has_fanart: bool,
+        has_background: bool,
     ) -> None:
         """Report images already in the output tree that our manifest lacks."""
         if self.manifest is None:
@@ -114,7 +115,8 @@ class Processor:
             return
         for name, present in (
             (DEFAULT_POSTER_NAME, has_poster),
-            (DEFAULT_BACKDROP_NAME, has_backdrop),
+            (DEFAULT_BACKDROP_NAME, has_fanart),
+            (ALTERNATE_BACKDROP_NAME, has_background),
         ):
             if present:
                 logger.warning(
@@ -398,7 +400,9 @@ class Processor:
         if self.output_root is not None and (
             has_poster or has_fanart or has_background
         ):
-            self._warn_untracked_files(folder, target, has_poster, has_fanart)
+            self._warn_untracked_files(
+                folder, target, has_poster, has_fanart, has_background
+            )
 
         if not want_poster and not want_backdrop:
             message = "كل أنواع الصور معطّلة — لم يُنزَّل أي ملف."
@@ -446,6 +450,21 @@ class Processor:
                 item=item,
                 status=Status.NOT_FOUND,
                 message="لم يتم العثور على تطابق في TMDB.",
+                webp_converted=conversion.converted,
+                webp_would_convert=conversion.would_convert,
+            )
+
+        if match.media_type != item.kind.tmdb_type:
+            logger.warning(
+                "تم رفض نتيجة '%s' لأن media_type (%s) لا يطابق نوع العنصر (%s).",
+                match.title,
+                match.media_type,
+                item.kind.tmdb_type,
+            )
+            return ItemResult(
+                item=item,
+                status=Status.NOT_FOUND,
+                message=f"نوع العمل غير متطابق: تم العثور على {match.media_type} ولكن العنصر هو {item.kind.tmdb_type}.",
                 webp_converted=conversion.converted,
                 webp_would_convert=conversion.would_convert,
             )
@@ -569,9 +588,17 @@ class Processor:
         if need_background and match.backdrop_path:
             required_ok = required_ok and final_background
 
+        # An unrequested file left from an earlier run is not evidence that
+        # this run partly succeeded: only types the user asked for count.
+        any_requested_present = (
+            (want_poster and final_poster)
+            or (want_fanart and final_fanart)
+            or (want_background and final_background)
+        )
+
         if required_ok:
             status = Status.PARTIAL if (errors or warnings_list) else Status.OK
-        elif final_poster or final_fanart or final_background:
+        elif any_requested_present:
             status = Status.PARTIAL
         else:
             status = Status.ERROR

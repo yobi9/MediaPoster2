@@ -125,3 +125,17 @@ def test_all_image_types_off_shows_a_visual_warning(window) -> None:
     window.poster_chip.setChecked(True)
 
     assert window.images_warning.isHidden() is True
+
+
+def test_no_cross_type_fallback_option_in_ui_or_client(window) -> None:
+    """AC-12: لا يوجد خيار cross_type_fallback في واجهة المستخدم أو عميل TMDB."""
+    import inspect
+
+    from app.services.tmdb import TMDBClient
+
+    sig = inspect.signature(TMDBClient.__init__)
+    assert "cross_type_fallback" not in sig.parameters
+
+    # لا يوجد عنصر واجهة للتحكم في cross_type_fallback
+    assert not hasattr(window, "cross_type_fallback_chip")
+    assert not hasattr(window, "cross_type_fallback_combo")

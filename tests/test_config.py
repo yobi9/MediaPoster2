@@ -263,3 +263,45 @@ def test_invalid_negative_ttl_in_config_file_is_ignored(tmp_path: Path) -> None:
 
     assert loaded.negative_cache_ttl_days == 30
     assert loaded.library_path == "D:/Media"
+
+
+# ---------------------------------------------------------------------------
+# Fanart toggle — توافق الإعدادات القديمة والاستمرارية (استكمال)
+# ---------------------------------------------------------------------------
+def test_old_config_without_download_fanart_defaults_to_false(tmp_path: Path) -> None:
+    """إعداد قديم بلا download_fanart يُحمّل معطّلاً مع الحفاظ على بقية الحقول."""
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "library_path": "D:/Media/Old",
+                "download_poster": True,
+                "download_background": True,
+                "language": "ar",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_config(path)
+
+    assert loaded.download_fanart is False
+    assert loaded.library_path == "D:/Media/Old"
+    assert loaded.download_poster is True
+    assert loaded.download_background is True
+    assert loaded.language == "ar"
+
+
+def test_download_fanart_persists_across_save_and_reload(tmp_path: Path) -> None:
+    """حفظ اختيار download_fanart في الملف واستعادته بعد إعادة التحميل (إعادة تشغيل)."""
+    path = tmp_path / "config.json"
+
+    enabled = AppConfig(download_fanart=True)
+    enabled.save(path)
+    reloaded_enabled = load_config(path)
+    assert reloaded_enabled.download_fanart is True
+
+    disabled = AppConfig(download_fanart=False)
+    disabled.save(path)
+    reloaded_disabled = load_config(path)
+    assert reloaded_disabled.download_fanart is False
