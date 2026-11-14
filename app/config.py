@@ -16,7 +16,7 @@ from typing import Any, get_type_hints
 
 APP_NAME = "MediaArt Auto-Sync"
 APP_SLUG = "MediaArtAutoSync"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # Uses the stdlib logger directly: ``logging_setup`` imports this module, so
 # importing it back would create a circular dependency.

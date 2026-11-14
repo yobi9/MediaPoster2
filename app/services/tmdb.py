@@ -33,7 +33,7 @@ from .title_cleaner import normalize_for_match
 
 BASE_URL = "https://api.themoviedb.org/3"
 IMAGE_BASE = "https://image.tmdb.org/t/p"
-USER_AGENT = "MediaArtAutoSync/1.0 (+https://www.themoviedb.org/)"
+USER_AGENT = "MediaArtAutoSync/1.0.1 (+https://www.themoviedb.org/)"
 
 # A match below this score is considered "not found" rather than "wrong movie".
 MIN_ACCEPT_SCORE = 55.0
