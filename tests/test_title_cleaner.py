@@ -61,3 +61,21 @@ def test_normalize_for_match_handles_arabic() -> None:
     assert normalize_for_match("أهلاً بالعالم") == normalize_for_match("اهلا بالعالم")
     assert normalize_for_match("Spider-Man: No Way Home") == "spider man no way home"
     assert normalize_for_match("Fast & Furious") == "fast and furious"
+
+
+# ---------------------------------------------------------------------------
+# مصطلحات إصدار تلتبس بكلمات العنوان (P2)
+# ---------------------------------------------------------------------------
+def test_release_jargon_does_not_eat_similar_title_words() -> None:
+    """الحدود الوظيفية تحمي التصريفات، والعنوان الطبيعي يبقى سليماً."""
+    assert clean_title("Multiplicity").title == "Multiplicity"
+    assert clean_title("Edge of Tomorrow (2014)").title == "Edge of Tomorrow"
+    assert clean_title("A Complete Unknown (2024)").title == "A Complete Unknown"
+
+
+def test_release_jargon_is_removed_next_to_real_tags() -> None:
+    """«Limited Edition» كوسم إصدار يُحذف ويبقى عنوان العمل."""
+    result = clean_title("Film.Limited.Edition.1080p.BluRay.x264-GRP")
+
+    assert result.title == "Film"
+    assert result.year is None

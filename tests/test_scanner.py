@@ -79,6 +79,8 @@ def test_helpers() -> None:
     assert looks_like_season_dir("S02")
     assert looks_like_season_dir("الموسم الأول")
     assert not looks_like_season_dir("Se7en")
+    # "Specials" is an extras folder, not a season (P1-5).
+    assert not looks_like_season_dir("Specials")
 
     assert looks_like_episode_dir("S01E01")
     assert looks_like_episode_dir("1x03")
@@ -87,6 +89,31 @@ def test_helpers() -> None:
     assert has_episode_marker("Show.S01E02.1080p.mkv")
     assert has_episode_marker("Show 1x02.mkv")
     assert not has_episode_marker("Movie.2020.mkv")
+
+
+def test_movie_with_specials_folder_stays_a_movie(tmp_path: Path) -> None:
+    """P1-5: فيلم بداخله مجلد Specials يبقى فيلماً (لا يتحول إلى مسلسل)."""
+    touch(tmp_path, "Movies/The Matrix (1999)/The.Matrix.1999.1080p.mkv")
+    touch(tmp_path, "Movies/The Matrix (1999)/Specials/BehindTheScenes.mkv")
+
+    items = discover_media(tmp_path)
+
+    assert len(items) == 1
+    assert items[0].kind is MediaKind.MOVIE
+    assert items[0].title == "The Matrix"
+    assert items[0].year == 1999
+
+
+def test_series_with_specials_folder_stays_a_series(tmp_path: Path) -> None:
+    """P1-5: مسلسل + Specials يبقى مسلسلاً ويُكتشف عبر مجلد الموسم."""
+    touch(tmp_path, "TV/Doctor Who (2005)/Season 1/S01E01.mkv")
+    touch(tmp_path, "TV/Doctor Who (2005)/Specials/Special.mkv")
+
+    items = discover_media(tmp_path)
+
+    assert len(items) == 1
+    assert items[0].kind is MediaKind.SERIES
+    assert items[0].title == "Doctor Who"
 
 
 def test_media_filter_movies_only_excludes_series(tmp_path: Path) -> None:

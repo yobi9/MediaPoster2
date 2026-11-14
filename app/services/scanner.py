@@ -34,6 +34,10 @@ _IGNORED_DIRS = frozenset({
     "lost+found", "sample", "samples", "trailer", "trailers", "featurettes",
     "featurette", "behind the scenes", "deleted scenes", "interviews",
     "subtitles", "subs", "artwork", "posters", "backdrops", "metadata", "nfo",
+    # "Specials" is a very common *extras* folder inside a movie folder: it is
+    # not a season, and treating it as one would misclassify the movie as a
+    # series (and hide its videos from the scan).
+    "specials", "special",
     ".actors", ".deletedbyttmm",
 })
 
@@ -57,7 +61,6 @@ _SEASON_DIR_RE = re.compile(
         (?:season|series|s|الموسم)\s*[._-]?\s*
         (?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|
            الأول|الأولي|الثاني|الثالث|الرابع|الخامس|السادس|السابع|الثامن|التاسع|العاشر)
-      | specials?|مميزة
     )
     (?:[\s._-].*)?$
     """

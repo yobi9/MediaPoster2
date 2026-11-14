@@ -19,7 +19,12 @@ from pathlib import Path
 
 import requests
 
-from ..config import CACHE_PATH, NEGATIVE_CACHE_PATH, load_config
+from ..config import (
+    CACHE_PATH,
+    DEFAULT_BACKDROP_SIZE,
+    DEFAULT_POSTER_SIZE,
+    NEGATIVE_CACHE_PATH,
+)
 from ..errors import TMDBError, TMDBAuthError, TMDBRateLimitError
 from ..logging_setup import get_logger
 from ..models import MediaItem, TMDBMatch
@@ -34,6 +39,8 @@ USER_AGENT = "MediaArtAutoSync/1.0 (+https://www.themoviedb.org/)"
 MIN_ACCEPT_SCORE = 55.0
 # Second language tried when the user's language returns no acceptable match.
 FALLBACK_LANGUAGE = "en"
+#: Default lifetime of a "not found" entry (mirrors ``AppConfig`` default).
+DEFAULT_NEGATIVE_CACHE_TTL_DAYS = 30
 
 logger = get_logger("tmdb")
 
@@ -82,14 +89,12 @@ class TMDBClient:
         self.min_interval = max(0.0, min_interval)
         self.max_retries = max(1, max_retries)
         self.prefer_localized_artwork = prefer_localized_artwork
-        # Image sizes: "original" is the full resolution and is roughly ten
-        # times heavier, so the defaults are the sized variants.
-        if poster_size is None or backdrop_size is None:
-            saved = load_config()
-            poster_size = poster_size or saved.poster_size
-            backdrop_size = backdrop_size or saved.backdrop_size
-        self.poster_size = poster_size
-        self.backdrop_size = backdrop_size
+        # Image sizes are explicit parameters: the client never reads
+        # ``config.json`` itself (that would make a network object depend on the
+        # user's disk and would let a stale/unwritable config change requests
+        # behind the caller's back).
+        self.poster_size = poster_size or DEFAULT_POSTER_SIZE
+        self.backdrop_size = backdrop_size or DEFAULT_BACKDROP_SIZE
 
         self._bearer = is_bearer_token(token)
         self._token = token
@@ -110,7 +115,7 @@ class TMDBClient:
         # re-run does not pay for the same fruitless searches. It lives in its
         # own file with its own TTL (JsonCache has one TTL per instance).
         if negative_cache_ttl_days is None:
-            negative_cache_ttl_days = load_config().negative_cache_ttl_days
+            negative_cache_ttl_days = DEFAULT_NEGATIVE_CACHE_TTL_DAYS
         self.refresh_negatives = refresh_negatives
         self.neg_cache = JsonCache(
             negative_cache_path

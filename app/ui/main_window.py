@@ -68,8 +68,17 @@ class MainWindow(QMainWindow):
         self._started_at = 0.0
         self._running = False
         self._dark_titlebar_done = False
-        self._counts = {"succeeded": 0, "skipped": 0, "not_found": 0, "errors": 0, "preview": 0}
         self._last_summary: RunSummary | None = None
+        # كل حالة تصل إلى _on_item يجب أن يكون لها عدّاد، وإلا انحرف
+        # «مجموع العدّادات» عن عدد صفوف الجدول (يحميه test_ui_counts).
+        self._counts = {
+            "succeeded": 0,
+            "skipped": 0,
+            "not_found": 0,
+            "errors": 0,
+            "preview": 0,
+            "cancelled": 0,
+        }
 
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(make_app_icon())
@@ -358,12 +367,14 @@ class MainWindow(QMainWindow):
         self.stat_not_found, self.stat_not_found_value = self._make_stat("غير موجود", "#FB923C")
         self.stat_errors, self.stat_errors_value = self._make_stat("أخطاء", "#F87171")
         self.stat_preview, self.stat_preview_value = self._make_stat("معاينة", "#A78BFA")
+        self.stat_cancelled, self.stat_cancelled_value = self._make_stat("ملغى", "#FBBF24")
         for box in (
             self.stat_ok,
             self.stat_skipped,
             self.stat_not_found,
             self.stat_errors,
             self.stat_preview,
+            self.stat_cancelled,
         ):
             stats.addWidget(box)
         layout.addLayout(stats)
@@ -786,7 +797,11 @@ class MainWindow(QMainWindow):
         status_item = QTableWidgetItem(result.status.label_ar)
         status_item.setForeground(QColor(STATUS_COLORS.get(result.status, "#E7EAF3")))
         status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        status_item.setData(Qt.ItemDataRole.UserRole, str(result.item.path))
+        # النقر المزدوج يفتح مكان الصور الفعلي (شجرة الإخراج مع output_root)،
+        # لا مجلد المصدر الذي قد يكون للقراءة فقط.
+        status_item.setData(
+            Qt.ItemDataRole.UserRole, result.target_dir or str(result.item.path)
+        )
 
         display_title = result.matched_title or result.item.title
         title_item = QTableWidgetItem(display_title)
@@ -816,6 +831,8 @@ class MainWindow(QMainWindow):
             self._counts["errors"] += 1
         elif result.status is Status.PREVIEW:
             self._counts["preview"] += 1
+        elif result.status is Status.CANCELLED:
+            self._counts["cancelled"] += 1
         self._update_stats()
 
     def _on_finished(self, summary: object) -> None:
@@ -916,7 +933,14 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(0)
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        self._counts = {"succeeded": 0, "skipped": 0, "not_found": 0, "errors": 0, "preview": 0}
+        self._counts = {
+            "succeeded": 0,
+            "skipped": 0,
+            "not_found": 0,
+            "errors": 0,
+            "preview": 0,
+            "cancelled": 0,
+        }
         self._update_stats()
         self.results_hint.setText("جارٍ المعالجة…")
         self.elapsed_label.setText("00:00")
@@ -929,6 +953,7 @@ class MainWindow(QMainWindow):
         self.stat_not_found_value.setText(str(self._counts["not_found"]))
         self.stat_errors_value.setText(str(self._counts["errors"]))
         self.stat_preview_value.setText(str(self._counts["preview"]))
+        self.stat_cancelled_value.setText(str(self._counts["cancelled"]))
 
     def _tick(self) -> None:
         if not self._running:

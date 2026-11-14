@@ -709,3 +709,87 @@ def test_cli_explicit_images_overrides_saved_fanart_setting(
         False,
         True,
     )
+
+
+# ---------------------------------------------------------------------------
+# أولوية --dry-run / --convert-only (P1-6)
+# ---------------------------------------------------------------------------
+def test_saved_preview_survives_without_flags(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """بلا --dry-run ⇒ يبقى وضع المعاينة المحفوظ من الواجهة كما هو."""
+    loaded = AppConfig(dry_run=True, convert_only=False)
+
+    code, config = _run_and_capture_loaded_config(monkeypatch, tmp_path, loaded)
+
+    assert code == 0
+    assert config.dry_run is True
+
+
+def test_saved_convert_only_survives_without_flags(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """بلا --convert-only ⇒ يبقى وضع التحويل فقط المحفوظ كما هو."""
+    loaded = AppConfig(dry_run=False, convert_only=True)
+
+    code, config = _run_and_capture_loaded_config(monkeypatch, tmp_path, loaded)
+
+    assert code == 0
+    assert config.convert_only is True
+
+
+def test_flags_override_saved_modes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """تمرير --dry-run مع إعداد محفوظ بلا معاينة يفرض المعاينة للجلسة."""
+    loaded = AppConfig(dry_run=False, convert_only=False)
+
+    code, config = _run_and_capture_loaded_config(
+        monkeypatch, tmp_path, loaded, "--dry-run"
+    )
+
+    assert code == 0
+    assert config.dry_run is True
+
+
+def test_convert_only_flag_keeps_saved_dry_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """--convert-only مع معاينة محفوظة ⇒ معاينة تحويل (لا شبكة) لكلاهما."""
+    loaded = AppConfig(dry_run=True, convert_only=False)
+
+    code, config = _run_and_capture_loaded_config(
+        monkeypatch, tmp_path, loaded, "--convert-only"
+    )
+
+    assert code == 0
+    assert (config.dry_run, config.convert_only) == (True, True)
+
+
+def test_processor_failure_returns_two_without_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """P0: فشل إنشاء Processor ⇒ رمز 2 (إعداد غير صالح) بلا UnboundLocalError."""
+    library = tmp_path / "Library"
+    item_folder = library / "Movie"
+    item_folder.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(cli, "load_config", lambda: AppConfig(library_path=str(library)))
+    monkeypatch.setattr(
+        cli,
+        "discover_media",
+        lambda root, media_filter="all", **kwargs: [
+            MediaItem(path=item_folder, kind=MediaKind.MOVIE, title="عنصر", year=2020)
+        ],
+    )
+    monkeypatch.setattr(cli, "TMDBClient", FakeClient)
+    monkeypatch.setenv("TMDB_API_KEY", "TESTTOKEN")
+
+    def boom(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise ValueError("مجلد الإخراج غير قابل للإنشاء")
+
+    monkeypatch.setattr(cli, "Processor", boom)
+
+    args = cli.build_parser().parse_args(["--cli", "--path", str(library)])
+
+    assert cli.run_cli(args) == 2

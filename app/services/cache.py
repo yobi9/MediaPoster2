@@ -88,7 +88,6 @@ class JsonCache:
         assert self.path is not None
         with self._lock:
             payload = json.dumps(self._data, ensure_ascii=False)
-            self._dirty = False
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp_name = tempfile.mkstemp(
@@ -99,6 +98,9 @@ class JsonCache:
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
                     handle.write(payload)
                 os.replace(tmp, self.path)
+                # Cleared only after the replace succeeded: a full disk or a
+                # dropped share must not silently drop the cached lookups.
+                self._dirty = False
             finally:
                 tmp.unlink(missing_ok=True)
         except OSError as exc:

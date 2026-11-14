@@ -88,6 +88,9 @@ class RunWorker(QThread):
                     use_cache=self.config.use_cache,
                     cache_ttl_days=self.config.cache_ttl_days,
                     prefer_localized_artwork=self.config.prefer_localized_artwork,
+                    negative_cache_ttl_days=self.config.negative_cache_ttl_days,
+                    poster_size=self.config.poster_size,
+                    backdrop_size=self.config.backdrop_size,
                 )
 
             images = ImageService(

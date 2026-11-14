@@ -123,6 +123,9 @@ class ItemResult:
     webp_would_convert: int = 0
     dry_run: bool = False
     target_writable: bool = True
+    #: المجلد الذي كُتبت فيه الصور فعلاً (يختلف عن ``item.path`` مع output_root).
+    #: تستخدمه الواجهة لفتح المجلد الصحيح عند النقر المزدوج.
+    target_dir: str = ""
 
     @property
     def is_success(self) -> bool:
@@ -183,6 +186,8 @@ class RunSummary:
         ]
         if self.preview:
             parts.append(f"معاينة: {self.preview}")
+        if self.cancelled_count:
+            parts.append(f"ملغى: {self.cancelled_count}")
         if self.webp_converted:
             parts.append(f"WebP→JPG: {self.webp_converted}")
         if self.webp_would_convert:

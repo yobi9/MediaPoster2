@@ -11,7 +11,7 @@ import pytest
 from PIL import Image
 
 from app.config import AppConfig
-from app.models import MediaItem, MediaKind, RunSummary, Status, TMDBMatch
+from app.models import ItemResult, MediaItem, MediaKind, RunSummary, Status, TMDBMatch
 from app.services.images import ImageService
 from app.services.processor import Processor
 
@@ -380,6 +380,22 @@ def test_summary_text_hides_preview_section_without_previews(
     assert summary.preview == 0
     assert "معاينة:" not in summary.summary_text()
     processor.close()
+
+
+def test_summary_text_reports_cancelled_count(tmp_path: Path) -> None:
+    """P1: الملخّص يذكر عدد الملغى صراحةً لا بالاكتفاء بـ«تم الإيقاف»."""
+    item = make_item(tmp_path)
+    summary = RunSummary(
+        total=3,
+        results=[ItemResult(item=item, status=Status.CANCELLED, message="تم الإلغاء.")],
+        cancelled=True,
+    )
+
+    text = summary.summary_text()
+
+    assert summary.cancelled_count == 1
+    assert "ملغى: 1" in text
+    assert "تم الإيقاف يدوياً" in text
 
 
 def test_partial_when_poster_fails(tmp_path: Path, image_server: str) -> None:
@@ -906,6 +922,77 @@ def test_webp_conversion_is_disabled_once_with_output_root(
         if "تم تعطيل تحويل WebP" in record.getMessage()
     ]
     assert len(warnings) == 1
+
+
+def test_dry_run_with_output_root_previews_instead_of_erroring(
+    tmp_path: Path, image_server: str
+) -> None:
+    """P0: المعاينة + output_root ⇒ PREVIEW، ولا إنشاء لمجلد الإخراج.
+
+    قبل الإصلاح كان فحص الكتابة يجري على مجلد إخراج غير موجود (لأن الإنشاء
+    يحدث في التشغيل الحقيقي فقط)، فيتحول كل عنصر إلى ERROR برسالة صلاحيات.
+    """
+    item = make_item(tmp_path)
+    output = tmp_path / "out"
+    processor = Processor(
+        _output_config(tmp_path, output, dry_run=True),
+        client=FakeClient(make_match(image_server)),
+        images=ImageService(),
+    )
+
+    result = processor.process_item(item)
+    processor.close()
+
+    assert result.status is Status.PREVIEW
+    assert result.dry_run
+    assert not (output / item.path.name).exists()
+    assert not (item.path / "poster.jpg").exists()
+
+
+def test_dry_run_with_output_root_never_writes_manifest(
+    tmp_path: Path, image_server: str
+) -> None:
+    """P0: المعاينة لا تنشئ مجلد العنصر داخل شجرة الإخراج ولا manifest.
+
+    جذر الإخراج نفسه يُنشأ عند التحقق من الإعداد (وهو مقصود)، أما مجلد العمل
+    فيُنشأ في التشغيل الحقيقي فقط.
+    """
+    item = make_item(tmp_path)
+    output = tmp_path / "out"
+    processor = Processor(
+        _output_config(tmp_path, output, dry_run=True),
+        client=FakeClient(make_match(image_server)),
+        images=ImageService(),
+    )
+
+    summary = processor.run([item])
+    processor.close()
+
+    assert summary.results[0].status is Status.PREVIEW
+    assert not (output / item.path.name).exists()
+    assert list(output.glob("*/poster.jpg")) == []
+    assert list(tmp_path.glob("**/.mediaart_manifest.json")) == []
+
+
+def test_result_carries_the_real_target_dir_with_output_root(
+    tmp_path: Path, image_server: str
+) -> None:
+    """P2: target_dir يشير إلى شجرة الإخراج (تستخدمه الواجهة لفتح المجلد)."""
+    item = make_item(tmp_path)
+    output = tmp_path / "out"
+    processor = Processor(
+        _output_config(tmp_path, output),
+        client=FakeClient(make_match(image_server)),
+        images=ImageService(),
+    )
+
+    summary = processor.run([item])
+    processor.close()
+
+    result = summary.results[0]
+    assert result.status is Status.OK
+    assert Path(result.target_dir) == output / item.path.name
+    assert (Path(result.target_dir) / "poster.jpg").is_file()
 
 
 def test_processor_rejects_mismatched_media_type(tmp_path: Path) -> None:

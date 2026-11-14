@@ -1,7 +1,10 @@
 {
   "tmdb_api_key": "",
   "library_path": "D:\\Media\\Library",
+  "output_root": "",
   "language": "ar",
+  "poster_size": "w500",
+  "backdrop_size": "w780",
   "jpeg_quality": 95,
   "overwrite_images": false,
   "download_poster": true,
@@ -10,13 +13,15 @@
   "create_folder_thumbnail": false,
   "convert_existing_webp": true,
   "convert_nested_webp": false,
-  "prefer_localized_artwork": true,
+  "prefer_localized_artwork": false,
   "dry_run": false,
   "convert_only": false,
   "media_filter": "all",
   "request_timeout": 20,
   "min_request_interval": 0.35,
   "max_retries": 3,
+  "max_workers": 3,
   "use_cache": true,
-  "cache_ttl_days": 30
+  "cache_ttl_days": 30,
+  "negative_cache_ttl_days": 30
 }

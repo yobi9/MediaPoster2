@@ -29,6 +29,14 @@ class CleanedTitle:
 # ---------------------------------------------------------------------------
 # Removed as standalone words. Longest entries win because the alternation is
 # sorted by length, so "dts hd ma" is consumed before "dts".
+#
+# Trade-off: a few entries double as ordinary English words ("limited",
+# "edition", "multi", "internal", "proper", "retail", "criterion",
+# "anniversary"). They stay because release names use them constantly
+# ("Limited Edition", "Criterion Collection", "Multi Audio"), and the
+# word-boundary match keeps inflections such as "Multiplicity" intact. The
+# cost is a folder named exactly like one of these words losing that word —
+# acceptable when weighed against the tagging vocabulary.
 _TAG_TERMS: tuple[str, ...] = (
     # resolution / dynamic range
     "2160p", "1080p", "720p", "480p", "4k", "8k", "uhd", "fhd", "fullhd",

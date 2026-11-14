@@ -26,8 +26,9 @@ from .config import (
     load_config,
     resolve_token,
 )
+from .errors import MediaArtError
 from .logging_setup import get_logger, setup_logging
-from .models import MediaKind
+from .models import MediaKind, RunSummary
 from .services.images import ImageService
 from .services.processor import Processor
 from .services.scanner import discover_media
@@ -127,8 +128,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--media", choices=[key for key, _ in MEDIA_FILTERS], help="نوع الوسائط.")
     parser.add_argument("--limit", type=int, help="معالجة أول N عنصر فقط (للتجربة).")
     parser.add_argument("--overwrite", action="store_true", help="استبدال الصور الموجودة.")
-    parser.add_argument("--dry-run", action="store_true", help="بحث فقط بدون تنزيل أو تحويل.")
-    parser.add_argument("--convert-only", action="store_true", help="تحويل WebP إلى JPG فقط بدون TMDB.")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=None,
+        help="بحث فقط بدون تنزيل أو تحويل (يتجاوز الإعداد المحفوظ لهذه الجلسة).",
+    )
+    parser.add_argument(
+        "--convert-only",
+        action="store_true",
+        default=None,
+        help="تحويل WebP إلى JPG فقط بدون TMDB (يتجاوز الإعداد المحفوظ لهذه الجلسة).",
+    )
     parser.add_argument("--no-cache", action="store_true", help="تعطيل كاش TMDB لهذه الجلسة.")
     parser.add_argument(
         "--images",
@@ -203,8 +214,14 @@ def run_cli(args: argparse.Namespace) -> int:
     config.prefer_localized_artwork = bool(
         args.localized_artwork or config.prefer_localized_artwork
     )
-    config.dry_run = bool(args.dry_run)
-    config.convert_only = bool(args.convert_only)
+    # Unlike --overwrite (which can only switch things on), these two are
+    # tri-state: absent means "keep whatever the GUI saved", present means the
+    # user asked for that mode for this run. Forcing them to False silently
+    # turned a saved preview into a real download run.
+    if args.dry_run is not None:
+        config.dry_run = bool(args.dry_run)
+    if args.convert_only is not None:
+        config.convert_only = bool(args.convert_only)
     config.use_cache = not args.no_cache
     if args.max_workers is not None:
         config.max_workers = args.max_workers
@@ -282,24 +299,36 @@ def _run_library(
 
     client: TMDBClient | None = None
     processor: Processor | None = None
+    images: ImageService | None = None
+    #: يبقى None إذا فشل التجهيز (توكن مرفوض، مجلد إخراج اختفى): عندها لا
+    #: معنى لطباعة ملخّص، ويجب أن يعود رمز صالح بدل UnboundLocalError.
+    summary: RunSummary | None = None
     try:
-        if not config.convert_only:
-            client = TMDBClient(
-                token,
-                language=config.language,
-                timeout=config.request_timeout,
-                min_interval=config.min_request_interval,
-                max_retries=config.max_retries,
-                use_cache=config.use_cache,
-                cache_ttl_days=config.cache_ttl_days,
-                prefer_localized_artwork=config.prefer_localized_artwork,
-                negative_cache_ttl_days=config.negative_cache_ttl_days,
-                refresh_negatives=bool(args.refresh_negatives),
-                poster_size=config.poster_size,
-                backdrop_size=config.backdrop_size,
-            )
-        images = ImageService(quality=config.jpeg_quality, timeout=config.request_timeout)
-        processor = Processor(config, client=client, images=images)
+        try:
+            if not config.convert_only:
+                client = TMDBClient(
+                    token,
+                    language=config.language,
+                    timeout=config.request_timeout,
+                    min_interval=config.min_request_interval,
+                    max_retries=config.max_retries,
+                    use_cache=config.use_cache,
+                    cache_ttl_days=config.cache_ttl_days,
+                    prefer_localized_artwork=config.prefer_localized_artwork,
+                    negative_cache_ttl_days=config.negative_cache_ttl_days,
+                    refresh_negatives=bool(args.refresh_negatives),
+                    poster_size=config.poster_size,
+                    backdrop_size=config.backdrop_size,
+                )
+            images = ImageService(quality=config.jpeg_quality, timeout=config.request_timeout)
+            processor = Processor(config, client=client, images=images)
+        except (MediaArtError, ValueError) as exc:
+            # A setup problem (bad token, vanished output folder) is an invalid
+            # configuration, not a crash: report it and exit 2.
+            logger.error("تعذّر بدء المعالجة: %s", exc)
+            if images is not None:
+                images.close()
+            return 2
 
         def on_progress(done: int, total: int, title: str) -> None:
             if done:
@@ -315,6 +344,10 @@ def _run_library(
             processor.close()
         elif client:
             client.close()
+
+    if summary is None:
+        logger.error("تعذّر بدء المعالجة؛ راجع الرسائل أعلاه.")
+        return 1
 
     print()
     print("=" * 60)

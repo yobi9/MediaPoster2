@@ -129,6 +129,33 @@ def test_default_image_sizes(tmp_path: Path) -> None:
     assert config.backdrop_size == "w780"
 
 
+def test_client_does_not_read_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P1: بناء العميل لا يلمس config.json (لا I/O خفي في طبقة الشبكة)."""
+    calls: list[int] = []
+
+    def forbidden(*args, **kwargs):  # noqa: ANN002, ANN003
+        calls.append(1)
+        raise AssertionError("TMDBClient must not read the config file")
+
+    monkeypatch.setattr("app.services.tmdb.load_config", forbidden, raising=False)
+
+    client = TMDBClient(
+        "0" * 32,
+        use_cache=True,
+        cache_path=tmp_path / "cache.json",
+        negative_cache_path=tmp_path / "cache_neg.json",
+    )
+
+    try:
+        assert calls == []
+        assert client.poster_size == "w500"
+        assert client.backdrop_size == "w780"
+    finally:
+        client.close()
+
+
 def test_invalid_poster_size_is_rejected() -> None:
     """A1-4: حجم غير مسموح ⇒ ValueError برسالة عربية."""
     from app.config import AppConfig

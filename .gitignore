@@ -9,6 +9,7 @@ venv/
 config.json
 app_log.txt*
 tmdb_cache.json
+tmdb_cache_neg.json
 *.log
 
 # Test / tooling
@@ -25,3 +26,6 @@ dist/
 
 # Screenshots / scratch
 ui_preview.png
+
+# Agent scratch space / notes
+.kilo/

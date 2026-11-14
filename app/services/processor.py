@@ -195,6 +195,7 @@ class Processor:
                 )
 
             summary.results.append(result)
+            self._stamp_target(item, result)
             self._record_manifest(item, result)
             summary.webp_converted += result.webp_converted
             summary.webp_would_convert += result.webp_would_convert
@@ -250,6 +251,7 @@ class Processor:
                         on_progress(index - 1, total, item.title)
                     result = future.result()
                     summary.results.append(result)
+                    self._stamp_target(item, result)
                     self._record_manifest(item, result)
                     summary.webp_converted += result.webp_converted
                     summary.webp_would_convert += result.webp_would_convert
@@ -300,6 +302,18 @@ class Processor:
                 message=f"خطأ غير متوقع: {exc.__class__.__name__}: {exc}",
             )
 
+    def _stamp_target(self, item: MediaItem, result: ItemResult) -> ItemResult:
+        """Record where *item*'s artwork actually landed (GUI open-folder).
+
+        Without ``output_root`` the answer is the item folder itself, which is
+        already what the GUI falls back to, so nothing is stamped then.
+        """
+        if result.target_dir or self.output_root is None:
+            return result
+        relative = self._rel_path(item.path)
+        result.target_dir = str(self.output_root / relative) if relative else str(item.path)
+        return result
+
     # ------------------------------------------------------------------
     def process_item(self, item: MediaItem) -> ItemResult:
         folder = item.path
@@ -317,7 +331,13 @@ class Processor:
         # unwritable target would otherwise waste a full download per image.
         # With `output_root` the source may be read-only on purpose, so the
         # probe and every write below use the output tree instead.
-        if not is_folder_writable(target):
+        #
+        # A preview never writes, so the probe (which creates and deletes a
+        # file) must not run: with `output_root` the per-item folder is only
+        # created on a real run, so probing it here would report a perfectly
+        # usable output tree as "not writable" and turn every preview into an
+        # ERROR.
+        if not cfg.dry_run and not is_folder_writable(target):
             message = f"مجلد الهدف غير قابل للكتابة: {target}"
             logger.error("%s: %s", item.title, message)
             return ItemResult(

@@ -95,6 +95,25 @@ def test_disabled_cache(tmp_path: Path) -> None:
     assert not (tmp_path / "cache.json").exists()
 
 
+def test_failed_flush_keeps_pending_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P2: فشل كتابة الكاش يُبقي التغييرات معلّقة بدل إسقاطها بصمت."""
+    import app.services.cache as cache_module
+
+    cache = JsonCache(tmp_path / "cache.json", ttl_days=30)
+    cache.set("a", {"value": 1})
+
+    def boom(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise OSError(" القرص ممتلئ")
+
+    monkeypatch.setattr(cache_module.os, "replace", boom)
+    cache.flush()
+
+    assert cache._dirty is True
+    assert not (tmp_path / "cache.json").exists()
+
+
 # ---------------------------------------------------------------------------
 # resolve_token — أولوية المفتاح الممرّر صراحةً (P2/A7)
 # ---------------------------------------------------------------------------

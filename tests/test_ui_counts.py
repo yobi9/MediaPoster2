@@ -46,6 +46,7 @@ def test_ui_counts_match_table_rows(qapp: QApplication, tmp_path: Path) -> None:
             make_result(tmp_path, Status.ERROR, "خطأ"),
             make_result(tmp_path, Status.SKIPPED, "متخطى"),
             make_result(tmp_path, Status.NOT_FOUND, "غير موجود"),
+            make_result(tmp_path, Status.CANCELLED, "ملغى"),
         ]
         for result in results:
             window._on_item(result)
@@ -57,6 +58,8 @@ def test_ui_counts_match_table_rows(qapp: QApplication, tmp_path: Path) -> None:
         assert window._counts["errors"] == 1
         assert window._counts["skipped"] == 1
         assert window._counts["not_found"] == 1
+        assert window._counts["cancelled"] == 1
+        assert window.stat_cancelled_value.text() == "1"
     finally:
         # close() يفصل QtLogHandler عن المسجّل (closeEvent)؛ deleteLater وحده
         # يُبقيه مربوطاً فيقتل أي سجل بعد موت النافذة.
