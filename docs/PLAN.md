@@ -1,7 +1,7 @@
 # خطة البناء — MediaArt Auto-Sync
 
-> **الإصدار:** 1.0.0
-> **الحالة:** مكتمل (Core + CLI + GUI + Tests + Docs)
+> **الإصدار:** 1.0.1
+> **الحالة:** مكتمل (Core + CLI + GUI + Tests + Docs + Packaging)
 > **المرجع التقني:** [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md)
 > **دليل المستخدم:** [`../README.md`](../README.md)
 > **البيئة المُختبرة:** Windows 10/11، Python 3.14.7
@@ -70,7 +70,7 @@
 - ❌ تحرير الصور أو إضافة نصوص عليها.
 - ❌ مزوّد بيانات بديل غير TMDB في v1.
 - ❌ مزامنة سحابية أو حساب مستخدم.
-- ❌ مثبّت Windows/توقيع كود في v1.
+- ❌ توقيع كود في v1 (المثبّت نفسه صار جزءاً من v1.0.1).
 - ❌ تنزيل متوازٍ بلا سقف (المتاح توازٍ محدود 1–8 على مستوى العناصر).
 - ❌ واجهة متعددة اللغات (البيانات فقط).
 
@@ -218,7 +218,7 @@
 
 **معيار القبول:**
 
-- [x] `run.bat --cli --version` يطبع `1.0.0`.
+- [x] `run.bat --cli --version` يطبع `1.0.1`.
 - [x] `--convert-only` يعمل بلا مفتاح وبلا إنترنت.
 - [x] `--dry-run` لا يكتب أي ملف.
 - [x] `--limit` يحدّ العدد.
@@ -269,8 +269,9 @@
 - [x] 230 اختباراً ناجحاً.
 - [x] تحقق CLI end-to-end.
 - [x] تحقق GUI offscreen end-to-end.
-- [ ] تغليف PyInstaller (مؤجل إلى ما بعد v1.0).
-- [ ] مثبّت Windows/توقيع (backlog).
+- [x] تغليف PyInstaller (منجز في v1.0.1: ملف تنفيذي واحد + نسخة محمولة + معالج تثبيت).
+- [x] مثبّت Windows (Inno Setup 6، تثبيت لكل مستخدم).
+- [ ] توقيع الكود (backlog).
 
 **معيار القبول:**
 
@@ -278,6 +279,29 @@
 - [x] تشغيل CLI كامل بلا استثناءات.
 - [x] تشغيل GUI بلا استثناءات.
 - [x] لا بيانات اختبار متبقية في `%LOCALAPPDATA%`.
+
+---
+
+### M7 — الإصدار v1.0.1
+
+**الهدف:** إصلاحات الجودة + إصدارات قابلة للتوزيع (ملف تنفيذي، نسخة محمولة، معالج تثبيت).
+
+- [x] عشرة إصلاحات P0/P1 في core وCLI والواجهة (بلا تغيير في السلوك العام).
+- [x] رفع الإصدار إلى `1.0.1` في `app/config.py` و`app/__init__.py` و`USER_AGENT`.
+- [x] `build.bat` جديد: بناء واحد بإصدار من مصدر واحد + بوابة `pytest` + تنظيف `dist`.
+- [x] `MediaArtAutoSync.spec` محسَّن: `optimize=2` + ترجمات مختصرة + استبعاد الملفات غير
+      المستخدمة ⇒ `45,430,602` ← `29,004,755` بايت (−36.15%) بلا UPX.
+- [x] `build_release.bat` ⇒ نسخة Portable (مجلد + zip + `SHA256SUMS.txt`).
+- [x] `installer/mediaart.iss` + `build_installer.bat` ⇒ معالج تثبيت Next ← Next ← Finish.
+
+**معيار القبول:**
+
+- [x] `.venv\Scripts\python.exe -m pytest -q` → 230 passed.
+- [x] ملف تنفيذي واحد `dist\MediaArtAutoSync-v1.0.1.exe` بلا إصدار CLI منفصل.
+- [x] البصمة SHA256 للـexe داخل `dist\portable\` مطابقة تماماً للمصدر.
+- [x] `--cli --convert-only` يعمل من النسخة المحمولة (تحويل `.webp` ⇒ `.jpg`).
+- [ ] التثبيت على جهاز نظيف (Next ← Next ← Finish ← تشغيل ← إلغاء تثبيت).
+- [ ] وسم `v1.0.1` + ملاحظات الإصدار على GitHub.
 
 ---
 
@@ -386,7 +410,7 @@ MediaPoster/
 | الفحص | الأمر/الطريقة | النتيجة |
 |---|---|---|
 | الاختبارات | `.venv\Scripts\python.exe -m pytest -q` | 230 passed |
-| إصدار CLI | `run.bat --cli --version` | `1.0.0` |
+| إصدار CLI | `run.bat --cli --version` | `1.0.1` |
 | تحويل فقط | `--cli --convert-only --path <temp>` | exit 0 + تحويل ملفات WebP |
 | واجهة offscreen | `QT_QPA_PLATFORM=offscreen` + إنشاء `MainWindow` | تعمل، الإشارات والتحويل ناجحة |
 | حفظ الإعدادات | تشغيل GUI ثم إغلاق | `config.json` + QSettings |
@@ -406,9 +430,10 @@ MediaPoster/
 - [ ] مسح `%LOCALAPPDATA%\MediaArtAutoSync` قبل أول تشغيل للمستخدم.
 - [ ] التأكد من عدم وجود `config.json` أو `app_log.txt` أو `ui_preview.png` في الحزمة.
 - [ ] فحص `.gitignore`.
-- [ ] إن وُجد Git: وسم `v1.0.0` وملاحظات إصدار.
-- [ ] (اختياري) بناء PyInstaller واختباره على جهاز نظيف.
-- [ ] (اختياري) إنشاء مثبّت وتوقيعه.
+- [ ] إن وُجد Git: وسم `v1.0.1` وملاحظات إصدار.
+- [x] بناء PyInstaller (تم) والنسخة المحمولة والمعالج.
+- [ ] اختبار التثبيت على جهاز نظيف.
+- [ ] توقيع الكود.
 
 ---
 
@@ -443,8 +468,9 @@ MediaPoster/
 
 ### v2.0 — توزيع
 
-- [ ] PyInstaller `--onefile`/`--onedir` مع hooks.
-- [ ] مثبّت Inno Setup + توقيع كود.
+- [x] PyInstaller `--onefile` مع hooks (منجز في v1.0.1).
+- [x] مثبّت Inno Setup (منجز في v1.0.1).
+- [ ] توقيع كود.
 - [ ] تحديث تلقائي موقّع.
 - [ ] دعم Linux/macOS رسمياً.
 - [ ] ترجمة واجهة إنجليزية.
