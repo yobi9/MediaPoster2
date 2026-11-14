@@ -29,3 +29,6 @@ ui_preview.png
 
 # Agent scratch space / notes
 .kilo/
+
+# Inno Setup build output
+installer/Output/
