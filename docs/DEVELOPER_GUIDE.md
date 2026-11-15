@@ -826,7 +826,7 @@ installer\build_installer.bat
 | المخرج | المسار |
 |---|---|
 | الملف التنفيذي | `dist\MediaArtAutoSync-v<VER>.exe` |
-| النسخة المحمولة | `dist\portable\MediaArtAutoSync-v<VER>\` + `dist\MediaArtAutoSync-v<VER>-portable.zip` |
+| النسخة المحمولة | `dist\portable\MediaArtAutoSync-v<VER>\` (يحتوي `MediaArtAutoSync-v<VER>-portable.exe` + `README.md`) + `dist\MediaArtAutoSync-v<VER>-portable.zip` |
 | بصمات SHA256 | `dist\SHA256SUMS.txt` |
 | معالج التثبيت | `installer\Output\MediaArtAutoSync-Setup-<VER>.exe` |
 

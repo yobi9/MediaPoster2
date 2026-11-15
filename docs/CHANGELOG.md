@@ -3,6 +3,13 @@
 جميع التغييرات الملحوظة في هذا المشروع ستُوثَّق في هذا الملف.
 التنسيق مستوحى من [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### تغيّر (Changed)
+- النسخة المحمولة: ملفها التنفيذي صار `MediaArtAutoSync-v<VER>-portable.exe` (تمييزاً عن
+  نسخة المثبّت `MediaArtAutoSync-v<VER>.exe`). الأثر في `main` بعد وسم `v1.0.1`؛
+  أصل الإصدار المنشور يحتوي الاسم السابق.
+
 ## [1.0.1] - 2026-11-15
 
 ### أُصلح (Fixed)

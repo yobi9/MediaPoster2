@@ -64,7 +64,7 @@
 
 1. **نزّل `MediaArtAutoSync-v1.0.1-portable.zip`** من صفحة الإصدارات.
 2. **فك الضغط** في أي مجلد — أو انسخ المجلد إلى ذاكرة USB.
-3. **شغّل `MediaArtAutoSync-v1.0.1.exe`**.
+3. **شغّل `MediaArtAutoSync-v1.0.1-portable.exe`**.
 
 لا يُكتب شيء بجوار الملف: إعداداتك وسجلاتك وكاشك تبقى في
 `%LOCALAPPDATA%\MediaArtAutoSync` على الجهاز الذي شغّلت منه.

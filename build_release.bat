@@ -33,6 +33,7 @@ if not defined APPVER (
     exit /b 1
 )
 set "EXENAME=MediaArtAutoSync-v%APPVER%.exe"
+set "PORTABLE_EXE=MediaArtAutoSync-v%APPVER%-portable.exe"
 set "PORTABLE_NAME=MediaArtAutoSync-v%APPVER%"
 set "PORTABLE_DIR=dist\portable\%PORTABLE_NAME%"
 set "ZIPNAME=MediaArtAutoSync-v%APPVER%-portable.zip"
@@ -73,7 +74,7 @@ if errorlevel 1 (
 )
 
 echo [6/9] نسخ الملفات إلى مجلد Portable ...
-copy /y "dist\%EXENAME%" "%PORTABLE_DIR%\" >nul
+copy /y "dist\%EXENAME%" "%PORTABLE_DIR%\%PORTABLE_EXE%" >nul
 if errorlevel 1 goto :failed
 copy /y "README.md" "%PORTABLE_DIR%\" >nul
 if errorlevel 1 goto :failed
@@ -81,7 +82,7 @@ if errorlevel 1 goto :failed
 echo [7/9] التحقق من تطابق البصمة (المصدر مقابل Portable) ...
 call :hash "dist\%EXENAME%"
 set "H_SRC=%HASH%"
-call :hash "%PORTABLE_DIR%\%EXENAME%"
+call :hash "%PORTABLE_DIR%\%PORTABLE_EXE%"
 set "H_PORT=%HASH%"
 if not defined H_SRC goto :failed
 if not defined H_PORT goto :failed
@@ -105,7 +106,7 @@ set "H_ZIP=%HASH%"
 if not defined H_ZIP goto :failed
 >"dist\SHA256SUMS.txt" echo %H_SRC%  %EXENAME%
 >>"dist\SHA256SUMS.txt" echo %H_ZIP%  %ZIPNAME%
->>"dist\SHA256SUMS.txt" echo %H_PORT%  portable\%PORTABLE_NAME%\%EXENAME%
+>>"dist\SHA256SUMS.txt" echo %H_PORT%  portable\%PORTABLE_NAME%\%PORTABLE_EXE%
 
 set "EXESIZE=0"
 for %%i in ("dist\%EXENAME%") do set "EXESIZE=%%~zi"
