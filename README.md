@@ -48,7 +48,7 @@
 
 ### للمستخدم النهائي: معالج التثبيت (موصى به)
 
-1. **نزّل `MediaArtAutoSync-Setup-1.0.1.exe`** من صفحة الإصدارات في المستودع.
+1. **نزّل `MediaArtAutoSync-Setup-1.0.2.exe`** من صفحة الإصدارات في المستودع.
 2. **شغّله** واتبع المعالج: `Next` ← `Next` ← `Finish`.
 3. يُثبَّت التطبيق **لكل مستخدم** في:
    `%LOCALAPPDATA%\Programs\MediaArt Auto-Sync` — بلا أي صلاحيات إدارية.
@@ -62,9 +62,9 @@
 
 ### النسخة المحمولة (Portable) — بلا تثبيت
 
-1. **نزّل `MediaArtAutoSync-v1.0.1-portable.zip`** من صفحة الإصدارات.
+1. **نزّل `MediaArtAutoSync-v1.0.2-portable.zip`** من صفحة الإصدارات.
 2. **فك الضغط** في أي مجلد — أو انسخ المجلد إلى ذاكرة USB.
-3. **شغّل `MediaArtAutoSync-v1.0.1-portable.exe`**.
+3. **شغّل `MediaArtAutoSync-v1.0.2-portable.exe`**.
 
 لا يُكتب شيء بجوار الملف: إعداداتك وسجلاتك وكاشك تبقى في
 `%LOCALAPPDATA%\MediaArtAutoSync` على الجهاز الذي شغّلت منه.
@@ -96,9 +96,9 @@ python main.py
 
 | الملف | الحجم | الاستخدام |
 |---|---|---|
-| `MediaArtAutoSync-v1.0.1.exe` | ‎~29 MB | الملف التنفيذي: الواجهة الرسومية، و`--cli` داخله. |
-| `MediaArtAutoSync-v1.0.1-portable.zip` | ‎~28.7 MB | نسخة محمولة (الملف التنفيذي + `README.md`). |
-| `MediaArtAutoSync-Setup-1.0.1.exe` | ‎~30.7 MB | معالج التثبيت (`Next` ← `Next` ← `Finish`). |
+| `MediaArtAutoSync-v1.0.2.exe` | ‎~29 MB | الملف التنفيذي: الواجهة الرسومية، و`--cli` داخله. |
+| `MediaArtAutoSync-v1.0.2-portable.zip` | ‎~28.7 MB | نسخة محمولة (الملف التنفيذي + `README.md`). |
+| `MediaArtAutoSync-Setup-1.0.2.exe` | ‎~30.7 MB | معالج التثبيت (`Next` ← `Next` ← `Finish`). |
 
 > لا يوجد إصدار CLI منفصل: وضع سطر الأوامر مدمج في الملف التنفيذي نفسه عبر `--cli`.
 

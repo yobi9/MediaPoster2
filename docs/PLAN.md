@@ -1,6 +1,6 @@
 # خطة البناء — MediaArt Auto-Sync
 
-> **الإصدار:** 1.0.1
+> **الإصدار:** 1.0.2
 > **الحالة:** مكتمل (Core + CLI + GUI + Tests + Docs + Packaging)
 > **المرجع التقني:** [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md)
 > **دليل المستخدم:** [`../README.md`](../README.md)
@@ -218,7 +218,7 @@
 
 **معيار القبول:**
 
-- [x] `run.bat --cli --version` يطبع `1.0.1`.
+- [x] `run.bat --cli --version` يطبع `1.0.2`.
 - [x] `--convert-only` يعمل بلا مفتاح وبلا إنترنت.
 - [x] `--dry-run` لا يكتب أي ملف.
 - [x] `--limit` يحدّ العدد.
@@ -302,6 +302,27 @@
 - [x] `--cli --convert-only` يعمل من النسخة المحمولة (تحويل `.webp` ⇒ `.jpg`).
 - [ ] التثبيت على جهاز نظيف (Next ← Next ← Finish ← تشغيل ← إلغاء تثبيت).
 - [ ] وسم `v1.0.1` + ملاحظات الإصدار على GitHub.
+
+---
+
+### M8 — الإصدار v1.0.2 (الأيقونة)
+
+**الهدف:** أيقونة مخصّصة للملف التنفيذي والمعالج والاختصارات، بلا تغيير في السلوك.
+
+- [x] تصدير أيقونة الواجهة نفسها إلى `assets/icon.ico` (16/32/48/256) عبر
+      `tools/export_icon.py` — مع تحميل خط Segoe UI صراحةً، لأن قاعدة الخطوط في وضع
+      `offscreen` فارغة فكان الحرف يُرسم كمستطيل «محرف مفقود».
+- [x] `MediaArtAutoSync.spec`: `icon=assets\icon.ico` داخل `EXE(...)`.
+- [x] `installer/mediaart.iss`: `SetupIconFile` + `IconFilename` للاختصارات.
+- [x] رفع الإصدار إلى `1.0.2` في `app/config.py` و`app/__init__.py` و`USER_AGENT`.
+- [x] إعادة بناء المخرجات الثلاثة.
+
+**معيار القبول:**
+
+- [x] `.venv\Scripts\python.exe -m pytest -q` → 230 passed.
+- [x] الملف التنفيذي ومعالج التثبيت يحملان الأيقونة (مُتحقَّق بالاستخراج من الملفين).
+- [ ] اختبار التثبيت على جهاز نظيف.
+- [ ] وسم `v1.0.2` + ملاحظات الإصدار على GitHub.
 
 ---
 
@@ -410,7 +431,7 @@ MediaPoster/
 | الفحص | الأمر/الطريقة | النتيجة |
 |---|---|---|
 | الاختبارات | `.venv\Scripts\python.exe -m pytest -q` | 230 passed |
-| إصدار CLI | `run.bat --cli --version` | `1.0.1` |
+| إصدار CLI | `run.bat --cli --version` | `1.0.2` |
 | تحويل فقط | `--cli --convert-only --path <temp>` | exit 0 + تحويل ملفات WebP |
 | واجهة offscreen | `QT_QPA_PLATFORM=offscreen` + إنشاء `MainWindow` | تعمل، الإشارات والتحويل ناجحة |
 | حفظ الإعدادات | تشغيل GUI ثم إغلاق | `config.json` + QSettings |
@@ -430,7 +451,7 @@ MediaPoster/
 - [ ] مسح `%LOCALAPPDATA%\MediaArtAutoSync` قبل أول تشغيل للمستخدم.
 - [ ] التأكد من عدم وجود `config.json` أو `app_log.txt` أو `ui_preview.png` في الحزمة.
 - [ ] فحص `.gitignore`.
-- [ ] إن وُجد Git: وسم `v1.0.1` وملاحظات إصدار.
+- [ ] إن وُجد Git: وسم `v1.0.2` وملاحظات إصدار.
 - [x] بناء PyInstaller (تم) والنسخة المحمولة والمعالج.
 - [ ] اختبار التثبيت على جهاز نظيف.
 - [ ] توقيع الكود.

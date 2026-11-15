@@ -90,6 +90,8 @@ exe = EXE(
     a.datas,
     [],
     name=EXE_NAME,
+    # Application icon exported from app\ui\theme.py (tools\export_icon.py).
+    icon=os.path.join(SPECPATH, 'assets', 'icon.ico'),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -36,6 +36,7 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#AppExe}
+SetupIconFile=..\assets\icon.ico
 
 [Languages]
 Name: "arabic"; MessagesFile: "compiler:Languages\Arabic.isl"
@@ -49,9 +50,9 @@ Source: "..\dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\MediaArt Auto-Sync"; Filename: "{app}\{#AppExe}"
-Name: "{group}\Uninstall MediaArt Auto-Sync"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\MediaArt Auto-Sync"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+Name: "{group}\MediaArt Auto-Sync"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\{#AppExe}"
+Name: "{group}\Uninstall MediaArt Auto-Sync"; Filename: "{uninstallexe}"; IconFilename: "{app}\{#AppExe}"
+Name: "{autodesktop}\MediaArt Auto-Sync"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,MediaArt Auto-Sync}"; Flags: nowait postinstall skipifsilent
